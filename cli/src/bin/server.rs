@@ -821,7 +821,7 @@ async fn export_graph(
     });
 
     // Baseline strong ignores for clean "keepers" / GNN skinny exports.
-    // Loaded from a file referenced in the wisperer repo (plans/keeper_baseline_ignores.txt).
+    // Loaded from a file referenced in the Butler repo (plans/keeper_baseline_ignores.txt).
     // This avoids duplicating the list in every test_repos/*/ .butlerignore .
     // User-provided ignores (from dashboard) are merged on top.
     let mut baseline_ignores: Vec<String> = vec![];
@@ -887,8 +887,8 @@ async fn export_graph(
     let export = if scope_paths.is_some() || ignore_paths.is_some() {
         let scopes = scope_paths.clone().unwrap_or_default();
         let mut ignores = ignore_paths.clone().unwrap_or_default();
-        // Always merge baseline (centralized here in wisperer export logic, mirroring HARVEST_GUIDE).
-        // Long term: load from a file referenced in the wisperer repo (e.g. .butler/shared_ignores or plans/)
+        // Always merge baseline (centralized here in Butler export logic, mirroring HARVEST_GUIDE).
+        // Long term: load from a file referenced in the Butler repo (e.g. .butler/shared_ignores or plans/)
         // so test_repos don't need duplicated .butlerignore files.
         for b in &baseline_ignores {
             if !ignores.iter().any(|i| i == b) {

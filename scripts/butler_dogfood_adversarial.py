@@ -49,7 +49,7 @@ TAURI_API = _hp("test_repos/tauri/examples/api")
 FASTAPI = _hp("test_repos/fastapi-ts")
 FD = _hp("test_repos/fd")
 BAT = _hp("test_repos/bat")
-BUTLER = _hp("lambda-wisperer")
+BUTLER = _hp(os.environ.get("BUTLER_SELF_REPO", "my-app"))
 EVE = _hp("lambda-eve")
 XI = _hp("Lambda-xi-rust")
 

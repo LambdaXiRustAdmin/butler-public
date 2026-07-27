@@ -731,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn decision_table_pyo3_bat_django_wisperer() {
+    fn decision_table_pyo3_bat_django_self() {
         // bat src/ → root package only
         assert!(dir_scope_matches_root_anchored("src/main.rs", "src/"));
         // pyo3: root src/ only, not ffi
@@ -740,7 +740,7 @@ mod tests {
             "pyo3-ffi/src/lib.rs",
             "src/"
         ));
-        // wisperer: bare src/ misses nested
+        // self-repo: bare src/ misses nested
         assert!(!dir_scope_matches_root_anchored("cli/src/lib.rs", "src/"));
         assert!(!dir_scope_matches_root_anchored(
             "code_graph/src/lib.rs",

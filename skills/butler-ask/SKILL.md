@@ -29,7 +29,7 @@ description: >
 
 ```json
 {
-  "project": "/projects/lambda-wisperer",
+  "project": "/path/to/your-repo",
   "mode": "arch",
   "scope_paths": ["cli/src/server/"],
   "detail": "short"
@@ -180,7 +180,7 @@ Server on `:8002`. Stdio bridge:
 {
   "mcpServers": {
     "butler": {
-      "command": "/absolute/path/to/lambda-wisperer/target/release/mcp",
+      "command": "/absolute/path/to/butler/target/release/mcp",
       "args": ["--stdio"],
       "env": { "BUTLER_URL": "http://127.0.0.1:8002" }
     }
@@ -213,7 +213,7 @@ butler_ask project=<click> symbol=Command scope_paths=["src/click/"] detail=shor
 butler_ask project=<click> symbol=Command scope_paths=["src/click/"] detail=long
 
 # Reverse spine (upward path toward entry)
-butler_ask project=<wisperer> symbol=handle_orchestrate scope_paths=["cli/"] detail=short
+butler_ask project=<your-repo-root> symbol=handle_orchestrate scope_paths=["cli/"] detail=short
 → read "call path (reverse spine · CALL only)" if present;
   open sole external parent (e.g. dispatch_tool) for contract change
 

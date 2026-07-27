@@ -568,7 +568,7 @@ pub fn render_shallow_marker_discovery(root: &std::path::Path) -> String {
         out.push_str("Docker: `/projects/…` · Host: `/home/<you>/projects/…` · Or pick from `/setup` dropdown.\n");
     } else {
         out.push_str("\nProvide one of the **highlighted** folders as your `project` (or inside `scope_paths`).\n\n");
-        out.push_str("Example:\n```json\n{\n  \"mcp_tool_name\": \"butler_orchestrate\",\n  \"goal\": \"ArchitecturalSummary\",\n  \"project\": \"/projects/lambda-wisperer\"\n}\n```\n");
+        out.push_str("Example:\n```json\n{\n  \"mcp_tool_name\": \"butler_orchestrate\",\n  \"goal\": \"ArchitecturalSummary\",\n  \"project\": \"/path/to/your-repo\"\n}\n```\n");
         out.push_str("For TraceBlastRadius use e.g. \"goal\": \"TraceBlastRadius\", \"target_symbol\": \"some_func\".\n");
     }
     out

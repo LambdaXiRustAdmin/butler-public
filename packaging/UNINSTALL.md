@@ -47,7 +47,7 @@ cargo uninstall butler 2>/dev/null || true
 ## Re-install
 
 ```bash
-cd /path/to/lambda-wisperer
+cd /path/to/butler
 ./install.sh
 # ends with butler ui (server + browser → /setup)
 ```

@@ -29,7 +29,7 @@ description: >
 
 ```json
 {
-  "project": "/projects/lambda-wisperer",
+  "project": "/path/to/your-repo",
   "mode": "arch",
   "scope_paths": ["cli/src/server/"],
   "detail": "short"
@@ -58,14 +58,12 @@ Also available: MCP tools **`butler_orchestrate`**, **`butler_help`**. Prefer **
 
 ## Tool habit
 
-1. **PRIMARY MCP tool:** `butler_ask` (after this skill is loaded — tool call, not skill args).
-2. Not `grep` / `rg` / recursive `list_dir` for structure.
-3. Expect **2–3 iterative MCP calls** before “missing.”
-4. On miss / disambiguate / BUILDING / empty scope: follow content **`next:`** (or `structured.next_action`).
-5. Do not abandon Butler after one empty or partial result.
-6. Do not use this skill as a substitute for MCP when tools are available.
+1. **PRIMARY:** `butler_ask` for structural questions (not `grep` / `rg` / recursive `list_dir`).
+2. Expect **2–3 iterative calls** before “missing.”
+3. On miss / disambiguate / BUILDING / empty scope: follow content **`next:`** (or `structured.next_action`).
+4. Do not abandon Butler after one empty or partial result.
 
-Also MCP: `butler_orchestrate` (explicit goal), `butler_help` (contract).
+Also: `butler_orchestrate` (explicit goal), `butler_help` (contract).
 
 ## Multi-pull
 
@@ -182,7 +180,7 @@ Server on `:8002`. Stdio bridge:
 {
   "mcpServers": {
     "butler": {
-      "command": "/absolute/path/to/lambda-wisperer/target/release/mcp",
+      "command": "/absolute/path/to/butler/target/release/mcp",
       "args": ["--stdio"],
       "env": { "BUTLER_URL": "http://127.0.0.1:8002" }
     }
@@ -196,15 +194,13 @@ Health: `curl -sS http://127.0.0.1:8002/mcp/health`
 
 | Do | Don’t |
 |----|--------|
-| **MCP tool** `butler_ask` for structure | Pass query only to the **skill** and stop |
-| Treat skill load as “read the manual” | Treat skill markdown as a graph result |
+| butler_ask for structure | grep for who-calls / arch |
 | Follow `next:` | One empty → filesystem thrash |
 | Prefer external + **reverse spine** for caller edits | Treat Debug/Default as entrypoints |
 | Root-anchored pins | Assume bare `src/` spans monorepo |
 | Read short `content` first | Default to long dump |
 | `detail=long` under same pin when sample thin | One global truncation guess |
 | Report empty spine honestly | Invent HTTP/router stack |
-| Say “MCP not connected” if tool missing | Blame “server offline” after skill-only response |
 
 ## Examples
 
@@ -217,7 +213,7 @@ butler_ask project=<click> symbol=Command scope_paths=["src/click/"] detail=shor
 butler_ask project=<click> symbol=Command scope_paths=["src/click/"] detail=long
 
 # Reverse spine (upward path toward entry)
-butler_ask project=<wisperer> symbol=handle_orchestrate scope_paths=["cli/"] detail=short
+butler_ask project=<your-repo-root> symbol=handle_orchestrate scope_paths=["cli/"] detail=short
 → read "call path (reverse spine · CALL only)" if present;
   open sole external parent (e.g. dispatch_tool) for contract change
 

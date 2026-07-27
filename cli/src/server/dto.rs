@@ -33,7 +33,7 @@ pub struct WarmResponse {
 /// # Example (keyword search)
 /// ```json
 /// {
-///   "project": "lambda-wisperer",
+///   "project": "/path/to/your-repo",
 ///   "prompt": "rate_limit middleware",
 ///   "depth": 2,
 ///   "max_tokens": 4000

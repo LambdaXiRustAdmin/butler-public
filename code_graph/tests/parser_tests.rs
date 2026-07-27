@@ -183,7 +183,7 @@ use code_graph::snooper::scanner::{get_skip_patterns, scan_workspace, should_sca
 #[test]
 fn test_get_skip_patterns_includes_defaults() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest.parent().unwrap(); // go up to lambda-wisperer root
+    let root = manifest.parent().unwrap(); // go up to workspace root
 
     // After refactor, pass the config defaults (now owned by ButlerSettings in cli).
     // For this test we simulate the full defaults list (must match cli/src/config.rs default).

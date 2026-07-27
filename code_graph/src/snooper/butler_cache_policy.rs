@@ -20,7 +20,7 @@ const FORBIDDEN_NEST_PARENTS: &[&str] = &["src", "examples", "tests", "test", "b
 /// If `root` is nested under a source/fixture tree, return a human reason.
 ///
 /// Allows:
-/// - `/projects/lambda-wisperer` (has `src/` *child*, root is not under `src/`)
+/// - `/projects/example-repo` (has `src/` *child*, root is not under `src/`)
 /// - `/tmp/butler_probe_xyz`
 ///
 /// Refuses:
@@ -103,17 +103,17 @@ mod tests {
 
     #[test]
     fn allows_repo_root_style_paths() {
-        assert!(butler_cache_write_forbidden_reason(Path::new("/projects/lambda-wisperer")).is_none());
+        assert!(butler_cache_write_forbidden_reason(Path::new("/projects/example-repo")).is_none());
         assert!(butler_cache_write_forbidden_reason(Path::new("/tmp/butler_probe_1")).is_none());
         assert!(butler_cache_write_forbidden_reason(Path::new("/home/u/projects/click")).is_none());
     }
 
     #[test]
     fn refuses_nested_src_and_examples() {
-        let snooper = PathBuf::from("/home/u/projects/lambda-wisperer/code_graph/src/snooper");
+        let snooper = PathBuf::from("/home/u/projects/example-repo/code_graph/src/snooper");
         assert!(butler_cache_write_forbidden_reason(&snooper).is_some());
 
-        let fixture = PathBuf::from("/home/u/projects/lambda-wisperer/code_graph/examples/test_data");
+        let fixture = PathBuf::from("/home/u/projects/example-repo/code_graph/examples/test_data");
         assert!(butler_cache_write_forbidden_reason(&fixture).is_some());
 
         let tests = PathBuf::from("/home/u/projects/foo/tests/data");

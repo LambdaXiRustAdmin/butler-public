@@ -437,7 +437,7 @@ DEFAULT_ROOTS: dict[str, Path] = {
     "fd": HOST_PROJECTS / "test_repos/fd",
     "click": HOST_PROJECTS / "test_repos/click",
     "fastapi-ts": HOST_PROJECTS / "test_repos/fastapi-ts",
-    "wisperer": HOST_PROJECTS / "lambda-wisperer",
+    "self": HOST_PROJECTS / os.environ.get("BUTLER_SELF_REPO", "my-app"),
 }
 
 # Optional hand-pinned regressions (must stay green). Repo paths are fixtures only.
@@ -529,7 +529,7 @@ SPINE_GOLD: list[dict[str, Any]] = [
     },
     {
         "id": "S_butler_collisions_spine0_handle",
-        "root": "wisperer",
+        "root": "self",
         "seed": "multi_file_name_collisions",
         # P2 peel: method lives in name_index.rs (was model.rs).
         "scope": ["code_graph/src/snooper/name_index.rs"],
@@ -715,7 +715,7 @@ def norm_path(p: str) -> str:
             break
     s = s_stripped
     # Prefer path under known repo folder names
-    for marker in ("test_repos/", "lambda-wisperer/"):
+    for marker in ("test_repos/", "my-app/"):
         if marker in s:
             s = s[s.index(marker) + len(marker) :]
             break

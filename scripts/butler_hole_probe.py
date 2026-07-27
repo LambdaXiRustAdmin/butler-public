@@ -7,7 +7,7 @@ warehouses.
 
 Usage:
   python3 scripts/butler_hole_probe.py
-  python3 scripts/butler_hole_probe.py --base http://127.0.0.1:8002 --roots /projects/lambda-wisperer,/projects/test_repos/click
+  python3 scripts/butler_hole_probe.py --base http://127.0.0.1:8002 --roots /path/to/your-repo,/projects/test_repos/click
   python3 scripts/butler_hole_probe.py --max-seeds 40 --json /tmp/holes.json -v
 
 Exit 0 if no *spectacular* holes (high+complete+fail). Soft fails still printed.
@@ -808,7 +808,7 @@ def main() -> int:
         roots = complete_roots(health)
         # Prefer keepers first if present
         prefer = [
-            "/projects/lambda-wisperer",
+            "/path/to/your-repo",
             "/projects/test_repos/click",
             "/projects/lambda-eve",
             "/projects/Lambda-xi-rust",

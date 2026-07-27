@@ -83,7 +83,7 @@ pub fn get_skip_patterns(root: &Path, config_skip_directories: &[String]) -> Vec
 ///
 /// Skip rules like `examples/` must apply to **in-repo** segments only. Matching the
 /// absolute path used to wipe projects whose root itself lives under `…/examples/…`
-/// (e.g. `lambda-wisperer/examples/word-count` → empty Complete cache forever).
+/// (e.g. `example-repo/examples/word-count` → empty Complete cache forever).
 pub fn path_for_skip_policy(path: &Path, root: &Path) -> String {
     let path_str = normalize_path(&path.to_string_lossy());
     let root_str = normalize_path(&root.to_string_lossy());
@@ -1000,29 +1000,29 @@ mod skip_segment_tests {
         // Regression: absolute-path skip matched `/examples/` in the *root* prefix and
         // produced empty Complete caches for demos like examples/word-count.
         let skips = vec!["examples/".into(), "tests/".into(), "docs/".into()];
-        let root = Path::new("/projects/lambda-wisperer/examples/word-count");
+        let root = Path::new("/projects/example-repo/examples/word-count");
         assert_eq!(
             path_for_skip_policy(
-                Path::new("/projects/lambda-wisperer/examples/word-count/src/main.py"),
+                Path::new("/projects/example-repo/examples/word-count/src/main.py"),
                 root
             ),
             "src/main.py"
         );
         assert!(should_scan_path_under(
-            Path::new("/projects/lambda-wisperer/examples/word-count/src/main.py"),
+            Path::new("/projects/example-repo/examples/word-count/src/main.py"),
             &skips,
             Some(root)
         ));
         assert!(!dir_should_prune(
             "src",
-            "/projects/lambda-wisperer/examples/word-count/src",
+            "/projects/example-repo/examples/word-count/src",
             &skips,
             Some(root)
         ));
         // examples/ dir itself is walkable (L2.1); non-dual-stack children still skip via path.
         assert!(!dir_should_prune(
             "examples",
-            "/projects/lambda-wisperer/examples/word-count/examples",
+            "/projects/example-repo/examples/word-count/examples",
             &skips,
             Some(root)
         ));

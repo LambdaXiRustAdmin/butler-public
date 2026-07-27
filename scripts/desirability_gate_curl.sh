@@ -85,8 +85,9 @@ else
 fi
 echo
 
-echo "--- Spine/Honesty payload: wisperer handle_orchestrate ---"
-T2=$(post '{"project":"/projects/lambda-wisperer","goal":"trace","target_symbol":"handle_orchestrate","scope_paths":["cli/"],"detail":"compact"}' | content)
+echo "--- Spine/Honesty payload: self-repo handle_orchestrate ---"
+SELF_ROOT="${BUTLER_SELF_ROOT:-${BUTLER_HOST_MOUNT:-$HOME/projects}/my-app}"
+T2=$(post "{\"project\":\"${SELF_ROOT}\",\"goal\":\"trace\",\"target_symbol\":\"handle_orchestrate\",\"scope_paths\":[\"cli/\"],\"detail\":\"compact\"}" | content)
 echo "$T2" | head -28
 echo "$T2" >/tmp/gate_handle_orchestrate.txt
 check "receipt present" "receipt:" "$T2"

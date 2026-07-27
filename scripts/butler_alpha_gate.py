@@ -63,7 +63,7 @@ KEEPERS_HOST = {
     "word-count": HOST_PROJECTS / "test_repos/pyo3/examples/word-count",
     "click": HOST_PROJECTS / "test_repos/click",
     "gin": HOST_PROJECTS / "test_repos/gin",
-    "wisperer": HOST_PROJECTS / "lambda-wisperer",
+    "self": HOST_PROJECTS / os.environ.get("BUTLER_SELF_REPO", "my-app"),
     "pybind11": HOST_PROJECTS / "test_repos/pybind11",
 }
 
@@ -376,9 +376,9 @@ def run_lane_ffi(base: str, verbose: bool) -> LaneResult:
 
 def run_lane_hole(base: str, verbose: bool) -> LaneResult:
     report = LANE_DIR / "hole.json"
-    # Prefer wisperer + click container paths when present
+    # Prefer self + click container paths when present
     roots: list[str] = []
-    for key in ("wisperer", "click"):
+    for key in ("self", "click"):
         h = KEEPERS_HOST[key]
         if h.is_dir():
             roots.append(host_to_container(h))

@@ -8,7 +8,7 @@
 **Date:** 2026-07-20 · **re-anchored 2026-07-22** (post peel wave + full dogfood green)  
 **Board:** [STACK_STATUS.md](./STACK_STATUS.md) · **Track T:** [agent-desirability.md](./agent-desirability.md)  
 **Dual goal:** [dual-goal.md](./dual-goal.md) — this doc is **Goal A (Product Alpha)**. Thesis structure (Goal B) is sequenced, not a substitute for stranger proof — see [context-engine-stage-peel.md](./context-engine-stage-peel.md).  
-**Brand note (parked — 2026-07-22):** Repo stays **`lambda-wisperer`**. Product voice = **Butler**. **Trace** = hero verb.  
+**Brand note (parked — 2026-07-22):** Product voice = **Butler**. Historical private lab folder names are not used in public docs. **Trace** = hero verb.  
 Optional external brand **Lambda-Atlas** is **not** an Alpha ship item — revisit only at a real **beta** gate (promoted tag / public post we care about), or never. Do **not** rename crates, env (`BUTLER_*`), MCP tools, or Docker for branding. Vanity rename is not a needle.
 
 ---
@@ -222,7 +222,7 @@ Roo / Cline are excellent **IDE** dogfooders but bad for **CI / batch / arbitrar
   - Mega-hubs → **I4 pack-omit honesty** (not “lie by omission”)  
   - Dual-stack seeds → bridges not CALL soup  
   - **No-grep** constraint in prompt + tool allowlist  
-  - Keeper set: e.g. `click`, `gin`, word-count/pyo3, wisperer self, one dual-stack keeper  
+  - Keeper set: e.g. `click`, `gin`, word-count/pyo3, this-repo / self, one dual-stack keeper  
 - **Success receipt for “paradigm” claim:** agent completes a scoped structural task (blast radius / signature edit map) **without** grep/rg as primary structure tool, and handles disambiguate correctly.
 
 ### Concrete next steps (dogfood)
@@ -273,7 +273,7 @@ python3 -u scripts/butler_alpha_dogfood.py --only-oracle
 | integrity | `butler_integrity_gate.py` | all cases pass |
 | watcher | `butler_watcher_probe.py --mode all` | spectacular=0 |
 | ffi | `butler_ffi_hole_probe.py` | spectacular=0 |
-| hole | `butler_hole_probe.py` (wisperer+click) | spectacular=0 |
+| hole | `butler_hole_probe.py` (self-repo+click) | spectacular=0 |
 | homonym | `butler_homonym_hole_probe.py` | spectacular=0 |
 | adversarial_gold | `butler_dogfood_adversarial.py --suite gold` | spectacular=0 |
 | desirability_curl | `desirability_gate_curl.sh` | exit 0 |
@@ -281,7 +281,7 @@ python3 -u scripts/butler_alpha_dogfood.py --only-oracle
 **Policy:** soft holes do **not** fail the gate unless `--strict-soft`.  
 **Reports:** `plans/receipts/alpha-gate-latest.json` + stamped `alpha-gate-<utc>.json` + per-lane under `plans/receipts/alpha-gate-lanes/`.
 
-**Keepers (host):** word-count, click, gin, wisperer, pybind11 under `$BUTLER_HOST_MOUNT` (default `$BUTLER_HOST_MOUNT` or `$HOME/projects`).
+**Keepers (host):** word-count, click, gin, self, pybind11 under `$BUTLER_HOST_MOUNT` (default `$BUTLER_HOST_MOUNT` or `$HOME/projects`).
 
 ### Product contract (do not over-claim green dogfood)
 
@@ -298,7 +298,7 @@ python3 -u scripts/butler_alpha_dogfood.py --only-oracle
 | ID | Trap | Pass |
 |----|------|------|
 | **T7** | `log` @ tauri Communication — `onclick={log}` | Seed OK; **no** “dead/never called”; acknowledge 0 CALL / callback |
-| **T9** | multi-loc `parse` @ wisperer | Disambiguate → pin **one file**; no frankenstein merge claim |
+| **T9** | multi-loc `parse` @ self-repo | Disambiguate → pin **one file**; no frankenstein merge claim |
 
 ```bash
 # traps only (after baseline green):
@@ -318,7 +318,7 @@ python3 -u scripts/desirability_a1_qwen.py --only T7,T9
 
 | Layer | Name | Status |
 |-------|------|--------|
-| Repo / git | `lambda-wisperer` | **Keep** through Alpha (and fine forever) |
+| Repo / git | public clone name (e.g. `butler`) | Product name is Butler |
 | Product / process / tools | **Butler** | Canonical voice |
 | Hero verb | **Trace** | Keep |
 | External brand “Lambda-Atlas” | optional map metaphor | **Parked** — beta-or-never; not a ship blocker |
@@ -347,7 +347,7 @@ If beta ever wants a public face: *Lambda-Atlas (Butler)* externally only — st
 
 | Date | Note |
 |------|------|
-| 2026-07-22 | **Brand parked:** repo stays `lambda-wisperer`; Butler + Trace; Lambda-Atlas = beta-or-never, not Alpha needle |
+| 2026-07-22 | **Brand:** product = Butler + Trace; optional external brand = beta-or-never |
 | 2026-07-22 | **Re-anchor keep-it-real:** map Alpha ~**75–78%** (not 72); desirability still ~**6.5–7/10** specialist; harnessed Qwen **7/7** ≠ default-over-grep; A1/A4/A5/peels/dogfood evidence table; **Shipping to the door** process section |
 | 2026-07-20 | Initial Alpha readiness (~72% map Alpha); gap A1–A6; dogfood harness-primary + Aider-secondary; naming Atlas external / Butler internal |
 | 2026-07-20 | **A1:** `scripts/butler_alpha_gate.py` — fixed multi-lane gate + receipts |

@@ -48,8 +48,8 @@ Highest priority first:
 | Destination | Purpose |
 |-------------|---------|
 | `<training-workspace>/.butler/weights/` | Training workspace / resume |
-| `lambda-wisperer/code_graph/weights/` | Butler source of truth (this tree) |
-| `lambda-wisperer/.butler/weights/` | Local project override for self-scoring |
+| `code_graph/weights/` (this tree) | Butler source of truth (this tree) |
+| `.butler/weights/` (local project override) | Local project override for self-scoring |
 | `~/.local/share/butler/weights/` | Installed runtime |
 
 ```bash
