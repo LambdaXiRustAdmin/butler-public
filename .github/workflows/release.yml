@@ -1,0 +1,112 @@
+# Portable Windows (and optional Linux) release zips — Level A packaging.
+# Native MSVC on windows-latest avoids Linux cross + tree-sitter pain.
+#
+# Triggers:
+#   - push tag v*  → GitHub Release with assets
+#   - workflow_dispatch → artifact upload only (manual smoke)
+#
+# Zip name: butler-windows-x64.zip (product Butler; not brand rename)
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows MSVC zip
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release bins
+        run: cargo build --release -p cli
+
+      - name: Stage zip contents
+        shell: pwsh
+        run: |
+          $out = "dist/butler-windows-x64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item target/release/butler.exe $out/
+          Copy-Item target/release/butler-server.exe $out/
+          Copy-Item target/release/mcp.exe $out/
+          if (Test-Path code_graph/weights/gnn_trained_global.bin) {
+            New-Item -ItemType Directory -Force -Path "$out/weights" | Out-Null
+            Copy-Item code_graph/weights/gnn_trained_global.bin "$out/weights/"
+          }
+          Copy-Item packaging/README-WINDOWS.txt $out/README.txt
+          Compress-Archive -Path "$out/*" -DestinationPath butler-windows-x64.zip -Force
+          Get-ChildItem butler-windows-x64.zip, $out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: butler-windows-x64
+          path: butler-windows-x64.zip
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: butler-windows-x64.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  linux:
+    name: Linux x64 zip (optional portable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release bins
+        run: cargo build --release -p cli
+
+      - name: Stage zip
+        run: |
+          out=dist/butler-linux-x64
+          mkdir -p "$out"
+          cp target/release/butler target/release/butler-server target/release/mcp "$out/"
+          if [ -f code_graph/weights/gnn_trained_global.bin ]; then
+            mkdir -p "$out/weights"
+            cp code_graph/weights/gnn_trained_global.bin "$out/weights/"
+          fi
+          printf '%s\n' \
+            'Butler portable (Linux x64)' \
+            '' \
+            '  ./butler ui' \
+            '  → http://127.0.0.1:8002/setup' \
+            '' \
+            'Keep butler, butler-server, and mcp in the same directory.' \
+            > "$out/README.txt"
+          (cd dist && zip -r ../butler-linux-x64.zip butler-linux-x64)
+          ls -la butler-linux-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: butler-linux-x64
+          path: butler-linux-x64.zip
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: butler-linux-x64.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,26 @@
+# Butler ignore file
+# Add any directory or file patterns you want Butler to completely skip
+# (one per line). This prevents the watcher from looping and keeps scans fast.
+
+# Common build / cache directories
+target/
+build/
+dist/
+out/
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cargo/
+
+# Butler itself
+.butler/
+
+# Git
+.git/
+
+# Add your own patterns below (examples):
+# .env
+# *.log
+# my-secret-dir/

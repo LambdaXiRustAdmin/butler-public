@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Butler — Setup</title>
+    <style>
+        :root {
+            --bg: #0d1117; --fg: #c9d1d9; --card: #161b22; --border: #30363d;
+            --accent: #238636; --muted: #8b949e; --red: #f85149; --green: #3fb950; --warn: #d29922;
+        }
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg); color: var(--fg); margin: 0; padding: 20px; line-height: 1.5;
+        }
+        .container { max-width: 760px; margin: 0 auto; }
+        header { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px; }
+        h1 { margin: 0 0 4px; font-size: 1.5rem; }
+        h3 { margin: 0 0 10px; font-size: 1.05rem; }
+        .card {
+            background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+            padding: 16px; margin-bottom: 14px;
+        }
+        .hint { font-size: 0.8rem; color: var(--muted); }
+        label { display: block; font-size: 0.8rem; margin-bottom: 4px; color: var(--muted); }
+        input, select, textarea, pre, code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        input, select {
+            width: 100%; box-sizing: border-box; background: #0d1117; color: var(--fg);
+            border: 1px solid var(--border); padding: 8px 10px; border-radius: 4px; font-size: 0.9rem;
+        }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+        button {
+            background: var(--accent); color: #fff; border: none; padding: 10px 14px;
+            border-radius: 4px; font-size: 0.9rem; cursor: pointer; margin-top: 8px; margin-right: 8px;
+        }
+        button.secondary { background: #21262d; border: 1px solid var(--border); }
+        button:hover { filter: brightness(1.08); }
+        #alive {
+            display: flex; align-items: center; gap: 10px; font-size: 1.05rem; font-weight: 600;
+        }
+        .dot {
+            width: 14px; height: 14px; border-radius: 50%; background: var(--muted);
+            box-shadow: 0 0 0 3px rgba(139, 148, 158, 0.25);
+        }
+        .dot.ok { background: var(--green); box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.25); }
+        .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.25); }
+        #install-log, #map-out, #trace-out, #mcp-json {
+            background: #0d1117; border: 1px solid var(--border); border-radius: 4px;
+            padding: 10px 12px; overflow: auto; white-space: pre-wrap;
+        }
+        #install-log {
+            min-height: 72px; max-height: 140px; font-size: 0.78rem; color: #a5d6ff;
+        }
+        #map-out {
+            min-height: 120px; max-height: 420px; font-size: 0.8rem; margin-top: 8px;
+        }
+        #trace-out {
+            min-height: 100px; max-height: 360px; font-size: 0.8rem; margin-top: 8px;
+        }
+        .prog-wrap {
+            display: none; margin-top: 10px; background: #0d1117; border: 1px solid var(--border);
+            border-radius: 4px; padding: 8px 10px;
+        }
+        .prog-wrap.show { display: block; }
+        .prog-bar-bg {
+            height: 10px; background: #21262d; border-radius: 5px; overflow: hidden;
+        }
+        .prog-bar-fg {
+            height: 100%; width: 0%; background: linear-gradient(90deg, #238636, #3fb950);
+            transition: width 0.35s ease;
+        }
+        .prog-label { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+        #mcp-json { font-size: 0.75rem; max-height: 200px; margin: 0; }
+        .banner-bad {
+            display: none; background: #3d1214; border: 1px solid var(--red); color: #ffb4b0;
+            border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; font-size: 0.9rem;
+        }
+        .banner-bad.show { display: block; }
+        .banner-bad strong { color: #fff; }
+        .map-label {
+            font-size: 0.75rem; color: var(--warn); margin-top: 8px;
+        }
+        footer { margin-top: 8px; font-size: 0.8rem; color: var(--muted); }
+        footer a { color: #58a6ff; }
+        .copy-ok { color: var(--green); font-size: 0.8rem; margin-left: 6px; }
+        #project-path { margin-top: 8px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>Butler Setup</h1>
+        <p class="hint" style="margin:0">Proof of life — pick a project, see a map, then optional Trace. Not the operator lab.</p>
+    </header>
+
+    <div id="path-banner" class="banner-bad" role="alert"></div>
+
+    <div class="card">
+        <h3>Install / activity</h3>
+        <div id="install-log" aria-live="polite">starting…</div>
+    </div>
+
+    <div class="card">
+        <div id="alive">
+            <span class="dot" id="alive-dot"></span>
+            <span id="alive-text">Checking engine…</span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">Default bind <code>127.0.0.1:{{PORT}}</code> · URL <code>{{BUTLER_URL}}</code></p>
+    </div>
+
+    <div class="card">
+        <h3>1 · Project (start here)</h3>
+        <p class="hint" style="margin-top:0">
+            <b>Project path</b> = absolute folder <em>this server</em> can see that holds real code
+            (Cargo.toml / package.json / go.mod / …).
+            Docker: usually <code>/projects/…</code>. Host: <code>/home/&lt;you&gt;/projects/…</code>.
+        </p>
+        <label for="project-path"><b>Project path</b> — type or paste here</label>
+        <input id="project-path" type="text"
+               placeholder="e.g. /home/you/projects/my-app"
+               autocomplete="off"
+               autofocus
+               style="font-size:1rem; padding:12px 10px; border:2px solid #388bfd;">
+        <p class="hint" style="margin:6px 0 10px">
+            Absolute folder this server can see. Host example: <code>/home/you/projects/…</code>
+            · Docker example: <code>/projects/…</code>
+        </p>
+        <label for="project-select">Or pick a loaded root (fills the box above)</label>
+        <select id="project-select">
+            <option value="">— waiting for engine / loaded roots —</option>
+        </select>
+        <button type="button" id="btn-map">Map this project</button>
+        <button type="button" class="secondary" id="btn-map-retry" style="display:none">Retry same Map</button>
+        <div id="map-scope-wrap" style="display:none; margin-top:10px;">
+            <label for="map-scope-select"><b>Warehouse too big — pick a crate/folder to map</b></label>
+            <select id="map-scope-select">
+                <option value="">— pick one suggested scope —</option>
+            </select>
+            <p class="hint" style="margin:6px 0 0">Filled when Map refuses a monorepo-wide summary. Choosing one re-Maps under that scope only.</p>
+        </div>
+        <div class="prog-wrap" id="map-prog">
+            <div class="prog-bar-bg"><div class="prog-bar-fg" id="map-prog-fg"></div></div>
+            <div class="prog-label" id="map-prog-label">Hydrating…</div>
+        </div>
+        <p class="map-label" id="map-label" style="display:none"></p>
+        <div id="map-out">Pick a project and click Map — you’ll get a structural skeleton (not full source).</div>
+    </div>
+
+    <div class="card">
+        <h3>2 · Connect your agent (copy-paste)</h3>
+        <p class="hint" style="margin-top:0">Paste into Cursor / Cline / Roo MCP config after the map looks right.</p>
+        <pre id="mcp-json"></pre>
+        <button type="button" id="btn-copy">Copy to clipboard</button>
+        <span id="copy-status" class="copy-ok"></span>
+    </div>
+
+    <div class="card">
+        <h3>3 · Optional Trace (after map works)</h3>
+        <p class="hint" style="margin-top:0">Prefer a distinctive symbol. Homonyms like <code>config</code> need a pin in scope.</p>
+        <div class="row">
+            <div>
+                <label for="symbol">Symbol</label>
+                <input id="symbol" type="text" value="main" placeholder="main">
+            </div>
+            <div>
+                <label for="scope">scope_paths (optional pin — or pick below)</label>
+                <input id="scope" type="text" placeholder="src or path/to/file.rs">
+            </div>
+        </div>
+        <div id="pin-wrap" style="display:none; margin-top:10px;">
+            <label for="pin-select"><b>Pin from last Trace</b> (disambiguate locations)</label>
+            <select id="pin-select">
+                <option value="">— pick one location to pin, then Trace again —</option>
+            </select>
+            <p class="hint" style="margin:6px 0 0">Filled automatically when Trace returns multiple locations. Choosing one fills scope and re-Traces.</p>
+        </div>
+        <button type="button" id="btn-trace">Trace</button>
+        <button type="button" class="secondary" id="btn-retry" style="display:none">Retry same Trace</button>
+        <div class="prog-wrap" id="trace-prog">
+            <div class="prog-bar-bg"><div class="prog-bar-fg" id="trace-prog-fg"></div></div>
+            <div class="prog-label" id="trace-prog-label">Hydrating…</div>
+        </div>
+        <div id="trace-out">Trace output…</div>
+    </div>
+
+    <footer>
+        Operator tools (export / harvest): <a href="/ops">/ops</a>
+        · Health: <a href="/mcp/health"><code>/mcp/health</code></a>
+        · <a href="https://ko-fi.com/lambdawisperer" target="_blank" rel="noopener noreferrer">Support</a>
+    </footer>
+</div>
+
+<script>
+const BUTLER_URL = "{{BUTLER_URL}}";
+const MCP_BIN = "{{MCP_BIN}}";
+const PORT = "{{PORT}}";
+const SKELETON_MAX_LINES = 100;
+
+function logLine(msg) {
+    const el = document.getElementById('install-log');
+    const t = new Date().toISOString().slice(11, 19);
+    if (el.textContent === 'starting…' || !el.textContent.trim()) {
+        el.textContent = `[${t}] ${msg}`;
+    } else {
+        el.textContent += `\n[${t}] ${msg}`;
+    }
+    el.scrollTop = el.scrollHeight;
+}
+
+function showPathBanner(html) {
+    const b = document.getElementById('path-banner');
+    b.innerHTML = html;
+    b.classList.add('show');
+}
+function hidePathBanner() {
+    const b = document.getElementById('path-banner');
+    b.classList.remove('show');
+    b.innerHTML = '';
+}
+
+function mcpSnippet() {
+    const bin = MCP_BIN || "mcp";
+    return JSON.stringify({
+        mcpServers: {
+            butler: {
+                command: bin,
+                args: ["--stdio"],
+                env: { BUTLER_URL: BUTLER_URL || ("http://127.0.0.1:" + PORT) }
+            }
+        }
+    }, null, 2);
+}
+document.getElementById('mcp-json').textContent = mcpSnippet();
+document.getElementById('btn-copy').onclick = async () => {
+    const st = document.getElementById('copy-status');
+    try {
+        await navigator.clipboard.writeText(document.getElementById('mcp-json').textContent);
+        st.textContent = "Copied.";
+        setTimeout(() => { st.textContent = ""; }, 2000);
+    } catch (_) {
+        st.textContent = "Copy manually from the box.";
+    }
+};
+
+function getSelectedProject() {
+    return document.getElementById('project-path').value.trim();
+}
+
+function fillProjectDropdown(roots) {
+    const sel = document.getElementById('project-select');
+    const pathEl = document.getElementById('project-path');
+    const prevPath = pathEl.value.trim();
+    const prevSel = sel.value;
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = roots.length
+        ? '— pick a loaded root to fill the path —'
+        : '— no loaded roots yet — type a path below —';
+    sel.appendChild(ph);
+    roots.forEach(r => {
+        const o = document.createElement('option');
+        o.value = r;
+        o.textContent = r;
+        sel.appendChild(o);
+    });
+    // Restore selection / auto-fill once when path empty and only one root.
+    if (prevSel && roots.includes(prevSel)) {
+        sel.value = prevSel;
+        if (!prevPath) pathEl.value = prevSel;
+    } else if (!prevPath && roots.length === 1) {
+        sel.value = roots[0];
+        pathEl.value = roots[0];
+    } else if (prevPath && roots.includes(prevPath)) {
+        sel.value = prevPath;
+    }
+}
+
+document.getElementById('project-select').onchange = () => {
+    const v = document.getElementById('project-select').value;
+    if (v) {
+        document.getElementById('project-path').value = v;
+    }
+    hidePathBanner();
+};
+
+document.getElementById('project-path').oninput = () => {
+    hidePathBanner();
+    // Keep dropdown in sync when user types a known root.
+    const path = document.getElementById('project-path').value.trim();
+    const sel = document.getElementById('project-select');
+    if ([...sel.options].some(o => o.value === path)) {
+        sel.value = path;
+    } else {
+        sel.value = '';
+    }
+};
+
+async function loadProjectOptions(healthJson) {
+    const roots = new Set();
+    if (healthJson && healthJson.loaded && typeof healthJson.loaded === 'object') {
+        Object.keys(healthJson.loaded).forEach(k => roots.add(k));
+    }
+    try {
+        const res = await fetch('/projects', { cache: 'no-store' });
+        if (res.ok) {
+            const j = await res.json();
+            const list = j.projects || j || [];
+            if (Array.isArray(list)) {
+                list.forEach(p => {
+                    if (typeof p === 'string') roots.add(p);
+                    else if (p && p.path) roots.add(p.path);
+                    else if (p && p.root) roots.add(p.root);
+                });
+            }
+        }
+    } catch (_) { /* optional */ }
+    fillProjectDropdown([...roots].sort());
+    if (roots.size) {
+        logLine(`Project dropdown: ${roots.size} root(s)`);
+    }
+}
+
+async function pollHealth() {
+    const dot = document.getElementById('alive-dot');
+    const text = document.getElementById('alive-text');
+    try {
+        const res = await fetch('/mcp/health', { cache: 'no-store' });
+        const j = await res.json().catch(() => ({}));
+        if (res.ok && (j.status === 'ok' || j.status === 'healthy')) {
+            dot.className = 'dot ok';
+            const n = j.loaded ? Object.keys(j.loaded).length : 0;
+            text.textContent = n > 0
+                ? `Engine Alive · 127.0.0.1:${PORT} · ${n} root(s) loaded`
+                : `Engine Alive · 127.0.0.1:${PORT}`;
+            await loadProjectOptions(j);
+            return true;
+        }
+        dot.className = 'dot bad';
+        text.textContent = `Engine responded but not ready (HTTP ${res.status})`;
+        return false;
+    } catch (e) {
+        dot.className = 'dot bad';
+        text.textContent = 'Engine unreachable — run butler ui / butler-server';
+        return false;
+    }
+}
+
+function looksLikeInvalidProjectContent(content) {
+    if (!content || typeof content !== 'string') return false;
+    const c = content.toLowerCase();
+    return c.includes('does not appear to be a valid project')
+        || c.includes('discovery mode')
+        || c.includes('no project markers found')
+        || c.includes('does not exist on the server');
+}
+
+function formatInvalidLoud(content, project) {
+    return (
+        '⚠ Does not appear to be a valid project path for this Butler server.\n\n' +
+        'Resolved: ' + project + '\n\n' +
+        'Project path = absolute folder the server can see that contains real code\n' +
+        '(Cargo.toml, package.json, go.mod, pyproject.toml, …).\n\n' +
+        '• Docker: use /projects/... (not /home/... unless that path exists in the container)\n' +
+        '• Host-native: use /home/<you>/projects/...\n' +
+        '• Prefer the dropdown of loaded roots when possible\n\n' +
+        '--- server detail ---\n' + content
+    );
+}
+
+function truncateSkeleton(content) {
+    const lines = content.split('\n');
+    if (lines.length <= SKELETON_MAX_LINES) {
+        return { text: content, truncated: false, total: lines.length };
+    }
+    const head = lines.slice(0, SKELETON_MAX_LINES).join('\n');
+    const note =
+        `\n\n… truncated: showing first ${SKELETON_MAX_LINES} of ${lines.length} lines of skeleton map.\n` +
+        '(Structural overview only — not full source. Re-Map or pin scope for more.)';
+    return { text: head + note, truncated: true, total: lines.length };
+}
+
+/** Repo-relative path for scope_paths (file pin preferred). */
+function locationToPin(L) {
+    let f = (L && L.file) ? String(L.file).replace(/\\/g, '/') : '';
+    if (!f) return '';
+    // Prefer path from known anchors so pin is project-relative.
+    const anchors = ['/crates/', '/src/', '/bin/', '/apps/', '/packages/', '/lib/', '/cmd/'];
+    for (const a of anchors) {
+        const i = f.indexOf(a);
+        if (i >= 0) {
+            f = f.slice(i + 1); // drop leading slash → crates/...
+            break;
+        }
+    }
+    // Strip absolute host/docker prefixes when still absolute
+    f = f.replace(/^\/home\/[^/]+\/projects\//, '');
+    f = f.replace(/^\/projects\/test_repos\/[^/]+\//, '');
+    f = f.replace(/^\/projects\/[^/]+\//, '');
+    f = f.replace(/^\.\//, '');
+    return f;
+}
+
+function pinLabel(L) {
+    const pin = locationToPin(L);
+    const name = (L && L.name) || '?';
+    const line = (L && L.line) != null ? L.line : '?';
+    return `${name} @ ${pin}:${line}`;
+}
+
+/** Populate pin dropdown from structured locations / suggested_scopes. */
+function populatePinDropdown(j) {
+    const wrap = document.getElementById('pin-wrap');
+    const sel = document.getElementById('pin-select');
+    if (!wrap || !sel) return;
+
+    const st = j && j.structured;
+    const locs = (st && st.locations) || [];
+    const sug = (st && st.suggested_scopes) || [];
+
+    // Prefer unique file pins from locations (full disambiguate list).
+    const pins = [];
+    const seen = new Set();
+    locs.forEach(L => {
+        const pin = locationToPin(L);
+        if (!pin || seen.has(pin)) return;
+        seen.add(pin);
+        pins.push({ pin, label: pinLabel(L) });
+    });
+    // Add suggested scopes that aren't already file pins
+    sug.forEach(s => {
+        const pin = String(s || '').replace(/\\/g, '/').replace(/^\.\//, '');
+        if (!pin || seen.has(pin)) return;
+        seen.add(pin);
+        pins.push({ pin, label: `scope: ${pin}` });
+    });
+
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    if (!pins.length) {
+        wrap.style.display = 'none';
+        ph.textContent = '— no pin options —';
+        sel.appendChild(ph);
+        return;
+    }
+    ph.textContent = `— pick 1 of ${pins.length} locations to pin, then re-Trace —`;
+    sel.appendChild(ph);
+    pins.forEach(({ pin, label }) => {
+        const o = document.createElement('option');
+        o.value = pin;
+        o.textContent = label;
+        sel.appendChild(o);
+    });
+    wrap.style.display = 'block';
+    logLine(`Pin dropdown: ${pins.length} option(s) from last Trace`);
+}
+
+function clearPinDropdown() {
+    const wrap = document.getElementById('pin-wrap');
+    const sel = document.getElementById('pin-select');
+    if (wrap) wrap.style.display = 'none';
+    if (sel) {
+        sel.innerHTML = '';
+        const ph = document.createElement('option');
+        ph.value = '';
+        ph.textContent = '— pick one location to pin, then Trace again —';
+        sel.appendChild(ph);
+    }
+}
+
+/** Extract suggested_scopes from structured or compact content text. */
+function extractSuggestedScopes(content, j) {
+    const fromSt = (j && j.structured && j.structured.suggested_scopes) || [];
+    if (Array.isArray(fromSt) && fromSt.length) {
+        return fromSt.map(s => String(s).trim()).filter(Boolean);
+    }
+    if (typeof content !== 'string') return [];
+    const m = content.match(/suggested_scopes:\s*(.+)/i);
+    if (!m) return [];
+    return m[1].split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function looksLikeArchTooBroad(content) {
+    if (!content || typeof content !== 'string') return false;
+    const c = content.toLowerCase();
+    return c.includes('scope too broad')
+        || c.includes('architecturalsummary refused')
+        || c.includes('arch refused')
+        || (c.includes('warehouse') && c.includes('cap'));
+}
+
+/** Populate map-scope dropdown when monorepo Map is refused. */
+function populateMapScopeDropdown(content, j) {
+    const wrap = document.getElementById('map-scope-wrap');
+    const sel = document.getElementById('map-scope-select');
+    if (!wrap || !sel) return;
+
+    const scopes = extractSuggestedScopes(content, j);
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    if (!scopes.length) {
+        wrap.style.display = 'none';
+        ph.textContent = '— no suggested scopes —';
+        sel.appendChild(ph);
+        return;
+    }
+    ph.textContent = `— pick 1 of ${scopes.length} crates/folders to map —`;
+    sel.appendChild(ph);
+    scopes.forEach(s => {
+        const o = document.createElement('option');
+        o.value = s;
+        o.textContent = s;
+        sel.appendChild(o);
+    });
+    wrap.style.display = 'block';
+    logLine(`Map scope dropdown: ${scopes.length} option(s)`);
+}
+
+function clearMapScopeDropdown() {
+    const wrap = document.getElementById('map-scope-wrap');
+    const sel = document.getElementById('map-scope-select');
+    if (wrap) wrap.style.display = 'none';
+    if (sel) {
+        sel.innerHTML = '';
+        const ph = document.createElement('option');
+        ph.value = '';
+        ph.textContent = '— pick one suggested scope —';
+        sel.appendChild(ph);
+    }
+}
+
+function appendStructuredHints(content, j) {
+    const st = j && j.structured;
+    if (!st) return content;
+    let extra = '';
+    const locs = st.locations || [];
+    if (locs.length) {
+        extra += '\n\nlocations (pin one for Trace — or use the pin dropdown above):\n';
+        locs.slice(0, 12).forEach(L => {
+            const f = locationToPin(L) || L.file || '';
+            extra += `  ${(L.name || '?')} @ ${f}:${L.line || '?'}\n`;
+        });
+    }
+    const sug = st.suggested_scopes || [];
+    if (sug.length) {
+        extra += 'suggested_scopes: ' + sug.slice(0, 8).join(', ') + '\n';
+    }
+    return content + extra;
+}
+
+let lastMapPayload = null;
+let lastTracePayload = null;
+const BUILD_MAX_TRIES = 60;
+
+function isBuilding(content, j) {
+    const st = (j && j.structured && j.structured.state) || {};
+    const status = String(st.status || st.edge_build || '');
+    return (typeof content === 'string' && (
+            content.includes('BUILDING')
+            || content.includes('=== Building Graph')
+            || content.includes('hydrating')
+        ))
+        || status.toUpperCase().includes('BUILDING');
+}
+
+function extractPercent(content, j) {
+    const st = (j && j.structured && j.structured.state) || {};
+    if (typeof st.percent === 'number') return Math.min(99, Math.max(0, st.percent));
+    if (j && j.structured && typeof j.structured.percent === 'number') {
+        return Math.min(99, Math.max(0, j.structured.percent));
+    }
+    const m = typeof content === 'string' && content.match(/\((\d{1,3})%\s*\)/);
+    if (m) return Math.min(99, parseInt(m[1], 10));
+    const m2 = typeof content === 'string' && content.match(/(\d{1,3})%\s*$/m);
+    if (m2) return Math.min(99, parseInt(m2[1], 10));
+    return null;
+}
+
+function retryMs(j) {
+    const wp = j && j.structured && j.structured.wait_policy;
+    const ms = wp && wp.retry_after_ms;
+    if (typeof ms === 'number' && ms > 200) return Math.min(ms, 8000);
+    return 1500;
+}
+
+function showProg(prefix, pct, detail) {
+    const wrap = document.getElementById(prefix + '-prog');
+    const fg = document.getElementById(prefix + '-prog-fg');
+    const lab = document.getElementById(prefix + '-prog-label');
+    if (!wrap) return;
+    wrap.classList.add('show');
+    const p = pct == null ? 3 : Math.max(1, Math.min(99, pct));
+    fg.style.width = p + '%';
+    lab.textContent = pct == null
+        ? (detail || 'Working…')
+        : `Hydrating / building — ${p}%` + (detail ? ` · ${detail}` : ' · auto-refreshing…');
+}
+
+function hideProg(prefix) {
+    const wrap = document.getElementById(prefix + '-prog');
+    if (wrap) wrap.classList.remove('show');
+}
+
+/** POST /context; auto-retry while BUILDING so the bar moves without manual Retry. */
+async function postContextUntilReady(payload, outEl, progPrefix) {
+    let lastPct = 0;
+    for (let attempt = 1; attempt <= BUILD_MAX_TRIES; attempt++) {
+        const res = await fetch('/context', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const text = await res.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch (_) {}
+
+        if (!res.ok) {
+            hideProg(progPrefix);
+            return { ok: false, error: `HTTP ${res.status}\n${text.slice(0, 2000)}` };
+        }
+
+        let content = (j && j.content) ? j.content : text;
+        if (typeof content !== 'string') content = JSON.stringify(content, null, 2);
+
+        if (isBuilding(content, j)) {
+            let pct = extractPercent(content, j);
+            if (pct == null) {
+                // Smooth crawl so something always moves while waiting.
+                lastPct = Math.min(95, lastPct + 1);
+                pct = lastPct;
+            } else {
+                lastPct = Math.max(lastPct, pct);
+                pct = lastPct;
+            }
+            showProg(progPrefix, pct, `try ${attempt}/${BUILD_MAX_TRIES}`);
+            outEl.textContent = content +
+                `\n\n— auto-refreshing (try ${attempt}/${BUILD_MAX_TRIES})… same request, no need to click Retry.`;
+            if (attempt === 1 || attempt % 5 === 0) {
+                logLine(`Still building (~${pct}%) try ${attempt}`);
+            }
+            await new Promise(r => setTimeout(r, retryMs(j)));
+            continue;
+        }
+
+        hideProg(progPrefix);
+        return { ok: true, content, j };
+    }
+    hideProg(progPrefix);
+    return {
+        ok: false,
+        error: 'Still building after many retries. Click Retry, or wait and Map/Trace again.\n' +
+            'Large repos can take minutes on first open.'
+    };
+}
+
+async function doMap(retry) {
+    const project = getSelectedProject();
+    const out = document.getElementById('map-out');
+    const label = document.getElementById('map-label');
+    const btnRetry = document.getElementById('btn-map-retry');
+    hidePathBanner();
+
+    if (!retry) {
+        if (!project) {
+            out.textContent = 'Select a project or type a path above.';
+            showPathBanner('<strong>No project path.</strong> Type an absolute path or pick a loaded root.');
+            return;
+        }
+        lastMapPayload = {
+            mcp_tool_name: 'butler_orchestrate',
+            project,
+            goal: 'ArchitecturalSummary',
+            detail: 'short'
+        };
+    }
+    if (!lastMapPayload) return;
+
+    out.textContent = 'Mapping project (skeleton)…';
+    btnRetry.style.display = 'none';
+    label.style.display = 'none';
+    if (!(lastMapPayload.scope_paths && lastMapPayload.scope_paths.length)) {
+        clearMapScopeDropdown();
+    }
+    showProg('map', 1, 'starting');
+    logLine(`POST /context ArchitecturalSummary project=${lastMapPayload.project}` +
+        (lastMapPayload.scope_paths && lastMapPayload.scope_paths[0]
+            ? ` scope=${lastMapPayload.scope_paths[0]}` : ''));
+
+    try {
+        const result = await postContextUntilReady(lastMapPayload, out, 'map');
+        if (!result.ok) {
+            out.textContent = result.error;
+            btnRetry.style.display = 'inline-block';
+            return;
+        }
+        const { content, j } = result;
+
+        if (looksLikeInvalidProjectContent(content)) {
+            showPathBanner(
+                '<strong>⚠ Does not appear to be a valid project path</strong> for this server.<br>' +
+                'Use an absolute path the server can see. Docker: <code>/projects/…</code> · ' +
+                'Host: <code>/home/&lt;you&gt;/projects/…</code>. Prefer the dropdown.'
+            );
+            out.textContent = formatInvalidLoud(content, lastMapPayload.project);
+            logLine('Map: invalid / discovery path');
+            return;
+        }
+
+        // Monorepo too broad → same pattern as Trace pins: dropdown of suggested crates
+        if (looksLikeArchTooBroad(content)) {
+            hideProg('map');
+            populateMapScopeDropdown(content, j);
+            out.textContent = content +
+                '\n\n— pick a crate/folder from the dropdown above to re-Map under that scope.';
+            logLine('Map refused: scope too broad — use map scope dropdown');
+            return;
+        }
+
+        clearMapScopeDropdown();
+        showProg('map', 100, 'done');
+        setTimeout(() => hideProg('map'), 600);
+
+        const sk = truncateSkeleton(content);
+        label.style.display = 'block';
+        label.textContent = sk.truncated
+            ? `Skeleton map — first ${SKELETON_MAX_LINES} of ${sk.total} lines (structure only, not full source).`
+            : `Skeleton map — ${sk.total} lines (structure only, not full source).`;
+        out.textContent = sk.text;
+        out.scrollTop = 0;
+        logLine(sk.truncated ? `Map ok (truncated ${SKELETON_MAX_LINES} lines)` : 'Map ok');
+    } catch (e) {
+        hideProg('map');
+        out.textContent = 'Error: ' + (e.message || e);
+        logLine('Map error: ' + (e.message || e));
+        btnRetry.style.display = 'inline-block';
+    }
+}
+
+async function doTrace(retry) {
+    const project = getSelectedProject();
+    const symbol = document.getElementById('symbol').value.trim();
+    const scopeRaw = document.getElementById('scope').value.trim();
+    const out = document.getElementById('trace-out');
+    const btnRetry = document.getElementById('btn-retry');
+    hidePathBanner();
+
+    if (!retry) {
+        if (!project) {
+            out.textContent = 'Select a project first (path box).';
+            return;
+        }
+        if (!symbol) {
+            out.textContent = 'Set a symbol (e.g. main).';
+            return;
+        }
+        const scope_paths = scopeRaw
+            ? scopeRaw.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+        lastTracePayload = {
+            mcp_tool_name: 'butler_orchestrate',
+            project,
+            goal: 'TraceBlastRadius',
+            target_symbol: symbol,
+            detail: 'short',
+            scope_paths
+        };
+    }
+    if (!lastTracePayload) return;
+
+    out.textContent = 'Tracing…';
+    btnRetry.style.display = 'none';
+    // Keep pin dropdown if this is a re-trace with pin; clear only on fresh unpinned search
+    if (!(lastTracePayload.scope_paths && lastTracePayload.scope_paths.length)) {
+        clearPinDropdown();
+    }
+    showProg('trace', 1, 'starting');
+    logLine(`POST /context Trace symbol=${lastTracePayload.target_symbol}` +
+        (lastTracePayload.scope_paths && lastTracePayload.scope_paths[0]
+            ? ` pin=${lastTracePayload.scope_paths[0]}` : ''));
+
+    try {
+        const result = await postContextUntilReady(lastTracePayload, out, 'trace');
+        if (!result.ok) {
+            out.textContent = result.error;
+            btnRetry.style.display = 'inline-block';
+            return;
+        }
+        let { content, j } = result;
+
+        if (looksLikeInvalidProjectContent(content)) {
+            showPathBanner(
+                '<strong>⚠ Invalid project path</strong> — fix the path before Tracing.'
+            );
+            out.textContent = formatInvalidLoud(content, lastTracePayload.project);
+            return;
+        }
+
+        showProg('trace', 100, 'done');
+        setTimeout(() => hideProg('trace'), 600);
+
+        // Multi-loc → fill pin dropdown from structured locations
+        populatePinDropdown(j);
+
+        content = appendStructuredHints(content, j);
+        out.textContent = content;
+        out.scrollTop = 0;
+        logLine('Trace complete');
+    } catch (e) {
+        hideProg('trace');
+        out.textContent = 'Error: ' + (e.message || e);
+        btnRetry.style.display = 'inline-block';
+    }
+}
+
+// Map refused (too broad) → pick suggested crate and re-Map.
+document.getElementById('map-scope-select').onchange = () => {
+    const scope = document.getElementById('map-scope-select').value;
+    if (!scope) return;
+    const project = getSelectedProject();
+    if (!project) return;
+    hidePathBanner();
+    logLine(`Map scope selected: ${scope} — re-Mapping…`);
+    lastMapPayload = {
+        mcp_tool_name: 'butler_orchestrate',
+        project,
+        goal: 'ArchitecturalSummary',
+        detail: 'short',
+        scope_paths: [scope]
+    };
+    doMap(true);
+};
+
+// Choosing a pin fills scope and re-Traces immediately (same symbol).
+document.getElementById('pin-select').onchange = () => {
+    const pin = document.getElementById('pin-select').value;
+    if (!pin) return;
+    document.getElementById('scope').value = pin;
+    hidePathBanner();
+    logLine(`Pin selected: ${pin} — re-Tracing…`);
+    // Force a new payload with this pin (not retry of unpinned)
+    const project = getSelectedProject();
+    const symbol = document.getElementById('symbol').value.trim();
+    if (!project || !symbol) return;
+    lastTracePayload = {
+        mcp_tool_name: 'butler_orchestrate',
+        project,
+        goal: 'TraceBlastRadius',
+        target_symbol: symbol,
+        detail: 'short',
+        scope_paths: [pin]
+    };
+    doTrace(true);
+};
+
+document.getElementById('btn-map').onclick = () => doMap(false);
+document.getElementById('btn-map-retry').onclick = () => doMap(true);
+document.getElementById('btn-trace').onclick = () => doTrace(false);
+document.getElementById('btn-retry').onclick = () => doTrace(true);
+
+async function bootLog() {
+    const params = new URLSearchParams(location.search);
+    document.getElementById('install-log').textContent = '';
+    if (params.get('spawned') === '1' || params.get('boot') === '1') {
+        logLine('Launcher opened this page.');
+    } else {
+        logLine('Welcome — checking local engine…');
+    }
+    let ok = false;
+    for (let i = 0; i < 30; i++) {
+        ok = await pollHealth();
+        if (ok) {
+            logLine('Engine Alive. Next: pick a project → Map this project.');
+            break;
+        }
+        logLine(i === 0 ? 'Waiting for health…' : `Still waiting (${i + 1}/30)…`);
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    if (!ok) logLine('Health failed — start butler-server or butler ui.');
+}
+
+bootLog();
+setInterval(pollHealth, 8000);
+</script>
+</body>
+</html>

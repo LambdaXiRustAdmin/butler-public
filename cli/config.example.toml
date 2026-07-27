@@ -1,0 +1,121 @@
+# =============================================================================
+# Butler config example — copy to:
+#   .butler/config.toml              (workspace / project)
+#   ~/.config/butler/config.toml     (global defaults)
+#
+# Priority (low → high): hardcoded defaults → global file → workspace file → env
+#
+# Nested keys as env: BUTLER__SERVER__PORT=9000, BUTLER__AGENT__USE_NEURAL=true
+# Flat ops knobs (not all mirrored in TOML): see "Environment-only" section below.
+# =============================================================================
+
+[server]
+# port = 8002
+# host = "127.0.0.1"   # default (A5) — local agents / laptop
+# host = "0.0.0.0"     # LAN/docker publish — set password when exposed
+
+# Install identity (old config-page "user name" — default = computer hostname)
+# username = "my-laptop"
+# Env: BUTLER_USERNAME
+
+# Optional shared secret — when set, API needs Bearer token or Basic username:password
+# password = "change-me"
+# Env: BUTLER_PASSWORD or BUTLER_API_TOKEN (MCP client uses the same env)
+
+# Project roots to load into RAM + start watchers at boot (async background thread).
+# Prefer absolute paths. Also: BUTLER_WARM_ROOTS=/a:/b  (colon or comma).
+# warm_roots = ["/home/you/projects/my-app", "/home/you/projects/other"]
+
+# Max in-memory graphs (LRU eviction of cold roots). 0 = unlimited. Default 32.
+# max_cached_graphs = 32
+
+# Cap for composed /context query-cache entries. Default 128.
+# query_cache_cap = 128
+
+[analysis]
+# worker_stack_size_mb = 32
+# max_call_graph_depth = 2
+
+# TraceBlastRadius caps (also surface in telemetry)
+# trace_max_fan_out = 20
+# trace_max_visited_nodes = 200
+
+# Hard cap on code blocks in any HTTP/MCP payload
+# max_context_blocks = 20
+# hub_budget_pct = 0.35
+
+# Fraction of logical CPUs for background FullEdge rayon pool (still RAM-capped).
+# Ops override: BUTLER_EDGE_THREADS=12
+# edge_build_thread_pct = 0.75
+
+# Path prefixes hard-skipped at scan (in addition to .butlerignore + built-ins).
+# skip_directories = ["my_vendor_tree/"]
+
+# Ranking noise (hubs/skeleton demotion) — directory segment names
+# noise_path_components = ["tests", "docs", "examples"]
+# noise_file_patterns = ["_test.go", ".spec.ts"]
+
+# Bundled-vendor directory segments (merged with built-ins: vendor, third_party, …).
+# Source of truth: code_graph::BUNDLED_VENDOR_DIR_SEGMENTS
+# extra_bundled_vendor_segments = ["_bundled", "thirdparty"]
+
+[agent]
+# expert_mode = false
+# default_max_tokens = 4000
+
+# --- Butler Rank (optional addon) — default OFF ---
+# Learned re-ranker on top of Core graph. Does NOT invent edges.
+# Plan: plans/butler-rank-addon.md  |  weights: BUTLER_GNN_WEIGHTS or code_graph/weights/
+# use_neural = false
+# neural_text_weight = 0.1
+# neural_score_weight = 0.9
+# neural_subgraph_top_n = 128
+# neural_subgraph_hops = 1
+# neural_l0_modules = 32   # 0 = score full graph at L1
+
+# Legacy training-path hooks (scoring is in-process; these are optional leftovers)
+# lambda_eve_bin = "/path/to/eve"
+# lambda_eve_manifest = "/path/to/lambda-eve/Cargo.toml"
+
+# -----------------------------------------------------------------------------
+# Optional: [[ipc_rules]] — cross-language bridge edges (Tauri invoke → Rust cmd
+# is built-in). Override/extend via project .butler/config.toml if needed.
+# -----------------------------------------------------------------------------
+
+# =============================================================================
+# Environment-only knobs (not in TOML structs; set in shell / docker-compose)
+# =============================================================================
+#
+# Preload / paths
+#   BUTLER_WARM_ROOTS=/a:/b          Boot-warm roots (with server.warm_roots)
+#   BUTLER_ROOT=.                   Default project root for bare requests
+#   BUTLER_PROJECTS_ROOT=/projects  Discovery base (Docker often /projects)
+#   BUTLER_HOST=0.0.0.0             Bind address (legacy; same as BUTLER__SERVER__HOST)
+#   BUTLER_HOST_MOUNT=…             Host path prefix (Docker path rewrite)
+#   BUTLER_CONTAINER_MOUNT=…        Container path prefix (pair with HOST)
+#   BUTLER_USERNAME=…               Display / Basic-auth user (default hostname)
+#   BUTLER_PASSWORD=…               Optional API secret (or BUTLER_API_TOKEN)
+#
+# Warehouse / concurrency
+#   BUTLER_QUERY_PARALLEL=64        Max concurrent /context queries (semaphore)
+#   BUTLER_FULLEDGE_PARALLEL=2      Max concurrent FullEdge jobs process-wide
+#   BUTLER_EDGE_THREADS=12          Absolute edge-build rayon thread count
+#   BUTLER_FORCE_RESCAN=1           Ignore disk cache; full rescan
+#
+# Logging / neural
+#   BUTLER_VERBOSE=1                Per-request TRACE/REQUEST/score_audit logs
+#   BUTLER_LOG_VERBOSE=1            Alias for BUTLER_VERBOSE
+#   BUTLER_GNN_WEIGHTS=/path.bin    Force GNN weights file
+#   BUTLER_POLYGLOT_AC=0|1          Polyglot Aho-Corasick bridge toggle
+#
+# Nested TOML mirror (examples)
+#   BUTLER__SERVER__PORT=8002
+#   BUTLER__SERVER__MAX_CACHED_GRAPHS=64
+#   BUTLER__AGENT__USE_NEURAL=true
+#   BUTLER__ANALYSIS__EDGE_BUILD_THREAD_PCT=0.75
+#
+# First-build / preload (CLI, no server required for disk cache):
+#   butler warm -r /path/to/repo
+#   butler warm -r /a -r /b --full          # skeleton + full edges
+#   butler warm -r /path --server http://127.0.0.1:8002   # also load into running server
+# =============================================================================

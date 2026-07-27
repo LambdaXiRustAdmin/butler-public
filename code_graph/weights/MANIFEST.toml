@@ -1,0 +1,26 @@
+# Active default weights for SmartButler inference.
+# Update this file whenever gnn_trained_global.bin is refreshed from Eve.
+
+[model]
+file = "gnn_trained_global.bin"
+format = "f32_le_raw"
+float_count = 786432
+byte_size = 3145728
+
+[layout]
+# TrainLayout v2 (Eve/Xi train + Butler cpu_gnn_forward twin)
+feature_dim = 32
+l1_offset = 0
+l1_len = 1024          # D×D
+l2_offset = 1024
+l2_len = 32            # D→1 head
+w_active = 1056
+# Remaining floats are training trinity pad (inert at serve time).
+
+[provenance]
+source = "optional R-GCN checkpoint (neural ranking default-off for map Alpha)"
+repos = ["click", "fd", "bat", "typer", "gin"]
+epochs_per_repo = 200
+fresh_weights = false
+notes = "Post layout-v2 + L2/tanh bwd fix. Active banks only trained; pad zero. Refresh MANIFEST on next dual-publish."
+date = "2026-07-09"

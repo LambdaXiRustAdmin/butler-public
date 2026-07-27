@@ -1,0 +1,47 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Butler specific
+.butler/
+butler_inc_test/
+
+# GNN weight epoch ladders (keep only active default in git)
+code_graph/weights/checkpoints/**
+!code_graph/weights/checkpoints/.gitkeep
+
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+.roocode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Worktrees / experiments (do not ship)
+.grok/*
+!.grok/skills/
+!.grok/skills/**
+worktrees/
+# Public Alpha: docs/ is the stranger-facing surface (not ignored)
+qodana.yaml
+butler_inc_test/
+target/
+
+# Misc temp
+*.log
+*.tmp
+
+# Local gate/dogfood receipts (machine paths) — never ship
+plans/
+receipts/
+**/alpha-gate-*.json
+.public-alpha-export
+__pycache__/
+*.py[cod]
+*.pyc
