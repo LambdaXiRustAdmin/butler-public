@@ -37,6 +37,9 @@ pub fn parse(
         .unwrap_or_else(|| "unknown".to_string());
 
     let mut blocks = Vec::new();
+    // Product warehouse definition-tier only (Hop A). Keep variable_declarator
+    // for named const/let export surfaces (import/export edges); drop statement
+    // and bare call_expression inventory nodes.
     let config = super::super::generic_parser::VisitConfig {
         interesting_kinds: &[
             "class_declaration",
@@ -44,18 +47,8 @@ pub fn parse(
             "function_declaration",
             "method_definition",
             "arrow_function",
-            // More for rich structure in GNN training:
-            "if_statement",
-            "for_statement",
-            "while_statement",
-            "call_expression",
-            "return_statement",
-            "variable_declaration",
-            "lexical_declaration",
-            // Named const/let bindings (`const Form = FormProvider`) — needed for export lists
-            // and `@/components/ui/form` import edges (L1.2).
+            // Named const/let bindings (`const Form = FormProvider`) — export / import surface.
             "variable_declarator",
-            "expression_statement",
         ],
         lang: "typescript",
         extract_name,

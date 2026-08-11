@@ -32,6 +32,8 @@ pub fn parse(
     let root = tree.root_node();
 
     let mut blocks = Vec::new();
+    // Product warehouse definition-tier only (Hop A). Training statement grain
+    // is out of product inventory; CALL sites remain AST-queried at FullEdge.
     let config = super::super::generic_parser::VisitConfig {
         interesting_kinds: &[
             "function_item",
@@ -44,19 +46,6 @@ pub fn parse(
             "type_item",
             "const_item",
             "static_item",
-            // More structural for richer WL / edges in training:
-            "if_expression",
-            "if_let_expression",
-            "for_expression",
-            "while_expression",
-            "loop_expression",
-            "match_expression",
-            "match_arm",
-            "call_expression",
-            "return_expression",
-            "let_declaration",
-            "let_statement",
-            "assignment_expression",
         ],
         lang: "rust",
         extract_name,
@@ -253,4 +242,53 @@ fn extract_external_crates(node: Node, source: &str) -> HashSet<String> {
     }
 
     crates
+}
+
+#[cfg(test)]
+mod definition_tier_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn rust_parse_emits_definition_kinds_only() {
+        let src = r#"
+fn foo() {
+    let x = 1;
+    bar();
+    if x > 0 {
+        return;
+    }
+}
+
+struct S;
+impl S {
+    fn meth(&self) {}
+}
+"#;
+        let parsed = parse(PathBuf::from("lib.rs"), src).expect("parse");
+        for b in &parsed.blocks {
+            assert!(
+                matches!(
+                    b.kind.as_str(),
+                    "function_item"
+                        | "struct_item"
+                        | "enum_item"
+                        | "union_item"
+                        | "trait_item"
+                        | "impl_item"
+                        | "mod_item"
+                        | "type_item"
+                        | "const_item"
+                        | "static_item"
+                ),
+                "non-definition product node: {}",
+                b.kind
+            );
+        }
+        assert!(!parsed.blocks.iter().any(|b| b.kind == "call_expression"));
+        assert!(!parsed.blocks.iter().any(|b| b.kind == "let_declaration"));
+        assert!(parsed.blocks.iter().any(|b| b.name == "foo"));
+        assert!(parsed.blocks.iter().any(|b| b.kind == "struct_item"));
+        assert!(parsed.blocks.iter().any(|b| b.kind == "impl_item"));
+    }
 }

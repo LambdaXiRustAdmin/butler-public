@@ -33,18 +33,11 @@ pub fn parse(
 
     let mut blocks = Vec::new();
     let config = super::super::generic_parser::VisitConfig {
+        // Product definition-tier only (Hop A).
         interesting_kinds: &[
             "function_declaration",
             "method_declaration",
             "type_spec", // covers struct and interface types
-            // Richer structural:
-            "if_statement",
-            "for_statement",
-            "range_clause",
-            "call_expression",
-            "return_statement",
-            "short_var_declaration",
-            "assignment_statement",
         ],
         lang: "go",
         extract_name,

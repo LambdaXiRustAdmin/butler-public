@@ -14,6 +14,7 @@ use crate::CodeGraph;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -24,14 +25,35 @@ const SETTLE_MS: u64 = 250;
 const COOLDOWN_MS: u64 = 400;
 /// Max files re-edged per batch (single-pager-ish). Overflow stays pending for the next cycle.
 const MAX_FILES_PER_BATCH: usize = 8;
+/// Poll cancel flag while idle waiting for FS events (Hop B warehouse sleep).
+const CANCEL_POLL_MS: u64 = 500;
 
+/// Start live FS watcher (no cancel). Prefer [`start_watcher_cancellable`] for sleepable roots.
 pub fn start_watcher(
     root: impl AsRef<Path>,
     graph: Arc<RwLock<CodeGraph>>,
     config_skip_directories: Vec<String>,
 ) {
+    start_watcher_cancellable(root, graph, config_skip_directories, None);
+}
+
+/// Live FS watcher that exits when `cancel` is set (warehouse sleep / RSS budget).
+///
+/// Sleep **never** deletes on-disk Complete cache — only stops watching and drops the
+/// live thread so the root can leave RAM without orphaned `butler-watcher-*` thrash.
+pub fn start_watcher_cancellable(
+    root: impl AsRef<Path>,
+    graph: Arc<RwLock<CodeGraph>>,
+    config_skip_directories: Vec<String>,
+    cancel: Option<Arc<AtomicBool>>,
+) {
     let root = root.as_ref().to_path_buf();
     std::thread::spawn(move || {
+        let cancelled = || {
+            cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+        };
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher: RecommendedWatcher = notify::recommended_watcher(tx).unwrap();
         watcher
@@ -78,14 +100,22 @@ pub fn start_watcher(
         let mut pending: HashSet<PathBuf> = HashSet::new();
 
         loop {
-            // Idle: block until the first relevant change.
+            if cancelled() {
+                println!(
+                    "👀 Watcher stopped (warehouse sleep/cancel) for {}",
+                    root.display()
+                );
+                return;
+            }
+            // Idle: wait for change, polling cancel so sleep can detach without orphan threads.
             if pending.is_empty() {
-                match rx.recv() {
+                match rx.recv_timeout(Duration::from_millis(CANCEL_POLL_MS)) {
                     Ok(Ok(event)) => {
                         absorb_event(&event, &root, &skip_patterns, &mut pending);
                     }
                     Ok(Err(_)) => continue,
-                    Err(_) => return, // channel closed
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => return, // channel closed
                 }
                 if pending.is_empty() {
                     continue;

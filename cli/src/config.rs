@@ -30,6 +30,14 @@ pub struct ServerConfig {
     /// Cap for composed `/context` query cache entries.
     #[serde(default = "default_query_cache_cap")]
     pub query_cache_cap: usize,
+    /// Hop B: seconds idle before a non-pinned warehouse may sleep (drop RAM + watchers).
+    /// Keep Complete on disk. Env: `BUTLER_WAREHOUSE_IDLE_SECS` / `BUTLER__SERVER__WAREHOUSE_IDLE_SECS`.
+    #[serde(default = "default_warehouse_idle_secs")]
+    pub warehouse_idle_secs: u64,
+    /// Hop B: longer idle for last_state project (preferred under light pressure).
+    /// Env: `BUTLER_WAREHOUSE_LAST_IDLE_SECS`.
+    #[serde(default = "default_warehouse_last_idle_secs")]
+    pub warehouse_last_idle_secs: u64,
 }
 
 /// Default username = OS hostname (install “computer name” field).
@@ -102,6 +110,22 @@ fn apply_server_identity_env(server: &mut ServerConfig) {
             }
         }
     }
+    // Hop B sleep knobs (flat env for ops probes without nested config).
+    if let Ok(v) = std::env::var("BUTLER_WAREHOUSE_IDLE_SECS") {
+        if let Ok(n) = v.trim().parse::<u64>() {
+            server.warehouse_idle_secs = n;
+        }
+    }
+    if let Ok(v) = std::env::var("BUTLER_WAREHOUSE_LAST_IDLE_SECS") {
+        if let Ok(n) = v.trim().parse::<u64>() {
+            server.warehouse_last_idle_secs = n;
+        }
+    }
+    if let Ok(v) = std::env::var("BUTLER_MAX_CACHED_GRAPHS") {
+        if let Ok(n) = v.trim().parse::<usize>() {
+            server.max_cached_graphs = n;
+        }
+    }
 }
 
 /// Default in-memory graph slots. Raised from 12 so multi-repo Trace demos
@@ -112,6 +136,16 @@ fn default_max_cached_graphs() -> usize {
 
 fn default_query_cache_cap() -> usize {
     128
+}
+
+/// Non-pinned roots sleep after this many idle seconds (Hop B). 0 = idle sleep disabled.
+fn default_warehouse_idle_secs() -> u64 {
+    300
+}
+
+/// last_state root sleeps after this many idle seconds (longer than generic idle).
+fn default_warehouse_last_idle_secs() -> u64 {
+    3600
 }
 
 /// Exact directory segment names only (mirrors filters::default_noise_path_components).
@@ -359,6 +393,8 @@ impl Default for ButlerSettings {
                 warm_roots: Vec::new(),
                 max_cached_graphs: default_max_cached_graphs(),
                 query_cache_cap: default_query_cache_cap(),
+                warehouse_idle_secs: default_warehouse_idle_secs(),
+                warehouse_last_idle_secs: default_warehouse_last_idle_secs(),
             },
             analysis: {
                 // skip_directories: infra + monorepo noise. Bundled-vendor segments
@@ -842,6 +878,38 @@ impl ButlerSettings {
                 .unwrap_or_else(|e| {
                     eprintln!(
                         "Warning: Failed to set default server.query_cache_cap: {}. Continuing.",
+                        e
+                    );
+                    b
+                });
+        }
+        {
+            let b = builder;
+            builder = b
+                .clone()
+                .set_default(
+                    "server.warehouse_idle_secs",
+                    defaults.server.warehouse_idle_secs as i64,
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "Warning: Failed to set default server.warehouse_idle_secs: {}. Continuing.",
+                        e
+                    );
+                    b
+                });
+        }
+        {
+            let b = builder;
+            builder = b
+                .clone()
+                .set_default(
+                    "server.warehouse_last_idle_secs",
+                    defaults.server.warehouse_last_idle_secs as i64,
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "Warning: Failed to set default server.warehouse_last_idle_secs: {}. Continuing.",
                         e
                     );
                     b

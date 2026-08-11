@@ -80,6 +80,65 @@ pub fn assert_butler_cache_writable(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Probe that `{root}/.butler/cache` is **actually** writable by this process.
+///
+/// Catches root-owned Docker litter (policy allows the path, open(2) still fails).
+/// Without this, FullEdge can rebuild for minutes then fail to persist — next open
+/// reloads stale edge_sem and thrash-rebuilds forever.
+///
+/// Checks (1) create a new probe file **and** (2) open existing `manifest.bin` /
+/// `graph.bin` for write when present — dir 775 + root-owned 644 files is a common trap.
+pub fn probe_butler_cache_dir_writable(root: &Path) -> io::Result<()> {
+    assert_butler_cache_writable(root)?;
+    let cache = root.join(".butler").join("cache");
+    if !cache.is_dir() {
+        // Parent create may still fail later; only probe when dir exists.
+        return Ok(());
+    }
+    let deny = |e: &io::Error, path: &Path| -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "cannot write Butler cache at {} ({e}) — often root-owned Docker files. \
+                 Fix: chown -R \"$(whoami)\" \"{}/.butler\"  then re-warm. \
+                 Until writable, Complete edges cannot persist and edge_sem bumps thrash FullEdge.",
+                path.display(),
+                root.display()
+            ),
+        )
+    };
+    let probe = cache.join(format!(
+        ".butler_write_probe_{}",
+        std::process::id()
+    ));
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+        }
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            return Err(deny(&e, &cache));
+        }
+        Err(e) => return Err(e),
+    }
+    // Existing artifacts may be root:root 644 while the directory is user-writable.
+    for name in ["manifest.bin", "graph.bin", "sources_fp.bin", "edges_part_00000.bin"] {
+        let p = cache.join(name);
+        if !p.is_file() {
+            continue;
+        }
+        match std::fs::OpenOptions::new().write(true).open(&p) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                return Err(deny(&e, &p));
+            }
+            Err(_) => {
+                // Other errors (e.g. busy) — ignore; save path will surface them.
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Create `{root}/.butler` only when policy allows.
 pub fn ensure_project_butler_dir(root: &Path) -> io::Result<PathBuf> {
     assert_butler_cache_writable(root)?;
@@ -93,6 +152,8 @@ pub fn ensure_project_butler_cache_dir(root: &Path) -> io::Result<PathBuf> {
     let butler = ensure_project_butler_dir(root)?;
     let cache = butler.join("cache");
     std::fs::create_dir_all(&cache)?;
+    // After create, confirm this uid can write (existing root-owned dir is a trap).
+    probe_butler_cache_dir_writable(root)?;
     Ok(cache)
 }
 
@@ -127,5 +188,14 @@ mod tests {
         assert!(butler_cache_write_forbidden_reason(&nested).is_none());
         std::env::remove_var(ALLOW_NESTED_ENV);
         assert!(butler_cache_write_forbidden_reason(&nested).is_some());
+    }
+
+    #[test]
+    fn probe_writable_on_tmp_ok() {
+        let dir = std::env::temp_dir().join(format!("butler_probe_write_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".butler/cache")).unwrap();
+        assert!(probe_butler_cache_dir_writable(&dir).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

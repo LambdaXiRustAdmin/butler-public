@@ -38,6 +38,8 @@ pub struct AppState {
     pub query_cache: SharedQueryCache,
     /// LRU order of graph roots for warm-set eviction (most recent at back).
     pub graph_lru: Arc<Mutex<VecDeque<String>>>,
+    /// Hop B: last access time per root (for idle sleep). Updated on touch.
+    pub graph_last_touch: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 /// Tracks the progress of an ongoing project graph scan.

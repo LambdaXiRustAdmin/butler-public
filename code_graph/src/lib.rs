@@ -20,7 +20,8 @@ pub use snooper::{
     is_code_shaped, is_junk_symbol_name, load_graph, normalize_seed_query, parse_file,
     rank_blocks_for_selection, rank_blocks_for_selection_subset, resolve_structural_query,
     save_graph, save_graph_async, scan_workspace, scan_workspace_with_waves, scoped_block_refs,
-    seed_name_matches_query, select_blocks, start_watcher, structural_block_score, BgBuildProgress,
+    seed_name_matches_query, select_blocks, start_watcher, start_watcher_cancellable,
+    structural_block_score, BgBuildProgress,
     BlockInfo, CodeGraph, Id, NameLocation, NeuralSelectionBlend, ParsePlan, ProjectPaths,
     RankedCandidate, RepoShapeKind, StructuralQuery, classify_from_abs_paths,
     classify_from_rel_paths, path_priority_for_plan,
@@ -29,7 +30,7 @@ pub use snooper::{
     CACHE_SCHEMA_VERSION, EDGE_SEMANTICS_VERSION, GRAPH_SCHEMA_VERSION, BridgeKind,
     // Nested-cache guard (no .butler under src/examples/tests)
     assert_butler_cache_writable, butler_cache_write_forbidden_reason, ensure_project_butler_cache_dir,
-    ensure_project_butler_dir, BUTLER_ALLOW_NESTED_CACHE_ENV,
+    ensure_project_butler_dir, probe_butler_cache_dir_writable, BUTLER_ALLOW_NESTED_CACHE_ENV,
     // Path policy: bundled-vendor segment skip list (scan hard-prune + demote)
     bundled_vendor_dir_segments_owned, bundled_vendor_skip_patterns, is_bundled_vendor_dir_segment,
     is_infra_prune_dir_segment, BUNDLED_VENDOR_DIR_SEGMENTS, INFRA_PRUNE_DIR_SEGMENTS,

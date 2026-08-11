@@ -13,7 +13,7 @@ pub mod rust;
 pub mod typescript;
 
 mod generic_edges;
-mod generic_parser;
+pub(crate) mod generic_parser;
 
 // Re-export ParseError for language modules to use
 pub use super::parser::ParseError;

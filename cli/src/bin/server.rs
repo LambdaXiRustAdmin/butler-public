@@ -168,6 +168,7 @@ async fn async_main(settings: ButlerSettings) -> Result<(), Box<dyn std::error::
         orchestrator_has_run,
         query_cache: query_cache::new_shared(query_cache_cap),
         graph_lru: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        graph_last_touch: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
     // P1: boot-warm configured roots (async load + watchers) so first /context is hot.
@@ -204,7 +205,7 @@ async fn async_main(settings: ButlerSettings) -> Result<(), Box<dyn std::error::
             .name("butler-warehouse-reaper".into())
             .spawn(move || {
                 println!(
-                    "🧹 Warehouse idle reaper online (every 30s; resume Incomplete FullEdge)"
+                    "🧹 Warehouse idle reaper online (every 30s; Incomplete FullEdge + Hop B sleep)"
                 );
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(30));
@@ -821,7 +822,7 @@ async fn export_graph(
     });
 
     // Baseline strong ignores for clean "keepers" / GNN skinny exports.
-    // Loaded from a file referenced in the Butler repo (plans/keeper_baseline_ignores.txt).
+    // Loaded from a file referenced in the wisperer repo (plans/keeper_baseline_ignores.txt).
     // This avoids duplicating the list in every test_repos/*/ .butlerignore .
     // User-provided ignores (from dashboard) are merged on top.
     let mut baseline_ignores: Vec<String> = vec![];
@@ -887,8 +888,8 @@ async fn export_graph(
     let export = if scope_paths.is_some() || ignore_paths.is_some() {
         let scopes = scope_paths.clone().unwrap_or_default();
         let mut ignores = ignore_paths.clone().unwrap_or_default();
-        // Always merge baseline (centralized here in Butler export logic, mirroring HARVEST_GUIDE).
-        // Long term: load from a file referenced in the Butler repo (e.g. .butler/shared_ignores or plans/)
+        // Always merge baseline (centralized here in wisperer export logic, mirroring HARVEST_GUIDE).
+        // Long term: load from a file referenced in the wisperer repo (e.g. .butler/shared_ignores or plans/)
         // so test_repos don't need duplicated .butlerignore files.
         for b in &baseline_ignores {
             if !ignores.iter().any(|i| i == b) {

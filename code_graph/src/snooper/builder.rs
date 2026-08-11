@@ -218,6 +218,10 @@ impl CodeGraph {
     }
 
     /// Re-collect call/usage edges for one already-resident file using a global name map.
+    ///
+    /// Prefer live-tree incremental parse (Hop A). Prefer graph-resident `BlockInfo` ids
+    /// (Hop B stable identity) over freshly content-hashed blocks so CALL endpoints keep
+    /// reverse fidelity after overlay.
     fn recollect_edges_for_resident_file(
         &mut self,
         norm_path: &Path,
@@ -236,17 +240,49 @@ impl CodeGraph {
         let Ok(source) = std::fs::read_to_string(&abs) else {
             return;
         };
-        let Ok(parsed) = parser::parse_file(norm_path, &source) else {
-            return;
-        };
-        let Some(ref tree) = parsed.tree else {
+        let (tree_owned, blocks_owned) =
+            match super::live_tree::parse_file_hot(root, norm_path, &source) {
+                Ok((parsed, _, _)) => {
+                    let tree = parsed.tree;
+                    let resident: Vec<_> = self
+                        .nodes
+                        .values()
+                        .filter(|b| b.file == *norm_path)
+                        .cloned()
+                        .collect();
+                    let blocks = if resident.is_empty() {
+                        parsed.blocks
+                    } else {
+                        resident
+                    };
+                    (tree, blocks)
+                }
+                Err(_) => {
+                    let Ok(parsed) = parser::parse_file(norm_path, &source) else {
+                        return;
+                    };
+                    let resident: Vec<_> = self
+                        .nodes
+                        .values()
+                        .filter(|b| b.file == *norm_path)
+                        .cloned()
+                        .collect();
+                    let blocks = if resident.is_empty() {
+                        parsed.blocks
+                    } else {
+                        resident
+                    };
+                    (parsed.tree, blocks)
+                }
+            };
+        let Some(ref tree) = tree_owned else {
             return;
         };
         self.clear_outbound_edges_for_file(norm_path);
         let edges = collect_edges_for_lang(
             norm_path,
             ext,
-            &parsed.blocks,
+            &blocks_owned,
             &source,
             tree,
             global,
@@ -268,6 +304,113 @@ impl CodeGraph {
         }
     }
 
+    /// Hop B: definition-tier overlay for one file — stable symbol ids when (name, kind) match,
+    /// CALL recollect only for this file (no bulk reverse-dep reparse). Preserves A→B reverse
+    /// edges when B's identity is stable across the edit.
+    ///
+    /// Identity rule: same file + same `name` + same `kind` → reuse old Id (first match wins
+    /// on duplicate names). Rename without cheap heuristic → delete + add (new content-hash Id).
+    ///
+    /// Returns false if overlay should fall back to bulk recollect.
+    fn apply_file_overlay(
+        &mut self,
+        norm: &Path,
+        root: &Path,
+        parsed: parser::ParsedFile,
+        verbose: bool,
+    ) -> bool {
+        use std::collections::HashMap as Map;
+
+        // Snapshot old defs for identity matching.
+        let old_blocks: Vec<(Id, String, String)> = self
+            .nodes
+            .values()
+            .filter(|b| b.file == *norm)
+            .map(|b| (b.id.clone(), b.name.clone(), b.kind.clone()))
+            .collect();
+        let mut old_by_key: Map<(String, String), Id> = Map::new();
+        for (id, name, kind) in &old_blocks {
+            // First wins; duplicate names rare at definition-tier.
+            old_by_key
+                .entry((name.clone(), kind.clone()))
+                .or_insert_with(|| id.clone());
+        }
+
+        // Stable ids: same file + name + kind → reuse old Id (callers keep reverse edges).
+        let mut new_blocks = parsed.blocks;
+        let mut reused = 0usize;
+        for b in &mut new_blocks {
+            if let Some(old_id) = old_by_key.get(&(b.name.clone(), b.kind.clone())) {
+                if b.id != *old_id {
+                    b.id = old_id.clone();
+                    reused += 1;
+                }
+            }
+        }
+        let new_ids: std::collections::HashSet<Id> =
+            new_blocks.iter().map(|b| b.id.clone()).collect();
+        let removed: Vec<Id> = old_blocks
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .filter(|id| !new_ids.contains(id))
+            .collect();
+
+        // Drop removed defs + any edges touching them.
+        for id in &removed {
+            self.nodes.remove(id);
+            self.edges.remove(id);
+            self.reverse.remove(id);
+        }
+        let drop: std::collections::HashSet<&Id> = removed.iter().collect();
+        if !drop.is_empty() {
+            for targets in self.edges.values_mut() {
+                targets.retain(|id| !drop.contains(id));
+            }
+            for sources in self.reverse.values_mut() {
+                sources.retain(|id| !drop.contains(id));
+            }
+        }
+
+        // Upsert new/updated blocks (stable ids preserve reverse for kept defs).
+        for b in new_blocks {
+            self.nodes.insert(b.id.clone(), b);
+        }
+        let pstr = norm.to_string_lossy().to_string();
+        self.file_hashes
+            .insert(pstr, CodeGraph::content_hash(&parsed.source));
+
+        // Outbound CALL for this file only (not reverse-dep bulk recollect).
+        self.invalidate_call_name_maps();
+        let global_maps = call_name_maps_snapshot(self);
+        let ext = norm.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_edge_buildable_ext(ext) {
+            let go_all = if ext == "go" {
+                Some(&global_maps.go_all)
+            } else {
+                None
+            };
+            self.recollect_edges_for_resident_file(
+                norm,
+                root,
+                Some(global_maps.for_ext(ext)),
+                go_all,
+            );
+        } else {
+            self.files_with_edges.insert(norm.to_path_buf());
+        }
+
+        if verbose {
+            println!(
+                "🧩 overlay file={} kept_ids={} removed={} reused_stable={}",
+                norm.display(),
+                new_ids.len(),
+                removed.len(),
+                reused
+            );
+        }
+        true
+    }
+
     /// Incrementally updates a single file in the graph.
     ///
     /// Evicts all blocks (and their edges) belonging to the file, reparses only that file,
@@ -286,10 +429,17 @@ impl CodeGraph {
     /// then one global name-map build, then edges for every batch file + reverse dependents.
     /// Processing A then B one-at-a-time with no global map left parent.callees empty while
     /// Trace loc-fallback still listed parent under callee.callers (soft M2 asymmetry).
+    ///
+    /// **Hop A (dirty cone):** when the warehouse was already Complete and the re-edge cone
+    /// is small, skip whole-warehouse PostPass (TS import maps / C decl↔def / FFI tables).
+    /// CALL edges for dirty files + reverse dependents are still rebuilt. Large cones or
+    /// incomplete warehouses still run PostPass.
     pub fn update_files_batch(&mut self, paths: &[PathBuf], root: &Path, verbose: bool) {
         if paths.is_empty() {
             return;
         }
+        // Capture before mutations — `is_edge_build_complete` may flip during eviction.
+        let was_complete = self.is_edge_build_complete();
         if verbose {
             if paths.len() == 1 {
                 println!("🔄 Watcher triggering incremental update for: {:?}", paths[0]);
@@ -326,74 +476,158 @@ impl CodeGraph {
             reedge_extra.extend(self.reverse_dependent_files(&ids, &self_files));
         }
 
-        // Evict all batch files, then reparse + insert blocks (edges later with shared map).
-        // IDs are content-addressed (file:kind:hash) so a second parse for edge collect matches.
+        // ── Edit-native path (Hop A parse + Hop B overlay) ─────────────────
+        // Prefer stable symbol ids + single-file CALL recollect without bulk reverse-dep
+        // reparse when the warehouse was Complete (soft-thin fix).
         let mut parsed_ok: Vec<PathBuf> = Vec::new();
-        for norm in &norm_paths {
-            self.evict_file_blocks_and_edges(norm);
+        let mut used_overlay = false;
+
+        if was_complete && norm_paths.len() == 1 {
+            let norm = &norm_paths[0];
             let abs = pp.to_abs(norm);
-            match std::fs::read_to_string(&abs)
-                .ok()
-                .and_then(|source| parser::parse_file(norm, &source).ok())
-            {
-                Some(parsed) => {
-                    self.insert_parsed_file_blocks(norm, parsed);
-                    // Mark edges pending until we recollect below.
-                    self.files_with_edges.remove(norm);
-                    parsed_ok.push(norm.clone());
+            if let Ok(source) = std::fs::read_to_string(&abs) {
+                match super::live_tree::parse_file_hot(root, norm, &source) {
+                    Ok((parsed, mode, n_changed)) => {
+                        if verbose {
+                            println!(
+                                "🌳 edit-native parse mode={:?} changed_ranges={} file={}",
+                                mode,
+                                n_changed,
+                                norm.display()
+                            );
+                        }
+                        if self.apply_file_overlay(norm, root, parsed, verbose) {
+                            used_overlay = true;
+                            parsed_ok.push(norm.clone());
+                        }
+                    }
+                    Err(e) => {
+                        if verbose {
+                            println!("⚠️ edit-native parse failed ({e}); fallback bulk recollect");
+                        }
+                        super::live_tree::forget_file(root, norm);
+                    }
                 }
-                None => {
-                    // File deleted / unreadable — drop hash; reverse deps still re-edged.
-                    let pstr = norm.to_string_lossy().to_string();
-                    self.file_hashes.remove(&pstr);
-                    self.files_with_edges.remove(norm);
-                }
+            } else {
+                // Deleted
+                let pstr = norm.to_string_lossy().to_string();
+                self.evict_file_blocks_and_edges(norm);
+                self.file_hashes.remove(&pstr);
+                self.files_with_edges.remove(norm);
+                super::live_tree::forget_file(root, norm);
             }
         }
 
-        self.invalidate_call_name_maps();
-        // Global maps include newly inserted batch blocks → cross-file CALL within batch.
-        let global_maps = call_name_maps_snapshot(self);
-
-        for norm in &parsed_ok {
-            let ext = norm.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !is_edge_buildable_ext(ext) {
-                continue;
+        if !used_overlay {
+            // Bulk path: evict + full recollect (+ reverse-deps) — multi-file / overlay fail.
+            for norm in &norm_paths {
+                self.evict_file_blocks_and_edges(norm);
+                let abs = pp.to_abs(norm);
+                let parsed = std::fs::read_to_string(&abs).ok().and_then(|source| {
+                    super::live_tree::parse_file_hot(root, norm, &source)
+                        .map(|(p, mode, n_changed)| {
+                            if verbose {
+                                println!(
+                                    "🌳 edit parse mode={:?} changed_ranges={} file={}",
+                                    mode,
+                                    n_changed,
+                                    norm.display()
+                                );
+                            }
+                            p
+                        })
+                        .or_else(|_| parser::parse_file(norm, &source))
+                        .ok()
+                });
+                match parsed {
+                    Some(parsed) => {
+                        self.insert_parsed_file_blocks(norm, parsed);
+                        self.files_with_edges.remove(norm);
+                        parsed_ok.push(norm.clone());
+                    }
+                    None => {
+                        let pstr = norm.to_string_lossy().to_string();
+                        self.file_hashes.remove(&pstr);
+                        self.files_with_edges.remove(norm);
+                        super::live_tree::forget_file(root, norm);
+                    }
+                }
             }
-            let go_all = if ext == "go" {
-                Some(&global_maps.go_all)
-            } else {
-                None
-            };
-            self.recollect_edges_for_resident_file(
-                norm,
-                root,
-                Some(global_maps.for_ext(ext)),
-                go_all,
-            );
-        }
 
-        // Restore A→F for files outside the batch that called into F before the strip.
-        for dep in &reedge_extra {
-            let ext = dep.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !is_edge_buildable_ext(ext) {
-                continue;
+            self.invalidate_call_name_maps();
+            let global_maps = call_name_maps_snapshot(self);
+
+            for norm in &parsed_ok {
+                let ext = norm.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if !is_edge_buildable_ext(ext) {
+                    continue;
+                }
+                let go_all = if ext == "go" {
+                    Some(&global_maps.go_all)
+                } else {
+                    None
+                };
+                self.recollect_edges_for_resident_file(
+                    norm,
+                    root,
+                    Some(global_maps.for_ext(ext)),
+                    go_all,
+                );
             }
-            let go_all = if ext == "go" {
-                Some(&global_maps.go_all)
-            } else {
-                None
-            };
-            self.recollect_edges_for_resident_file(
-                dep,
-                root,
-                Some(global_maps.for_ext(ext)),
-                go_all,
-            );
+
+            // Restore A→F for files outside the batch that called into F before the strip.
+            for dep in &reedge_extra {
+                let ext = dep.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if !is_edge_buildable_ext(ext) {
+                    continue;
+                }
+                let go_all = if ext == "go" {
+                    Some(&global_maps.go_all)
+                } else {
+                    None
+                };
+                self.recollect_edges_for_resident_file(
+                    dep,
+                    root,
+                    Some(global_maps.for_ext(ext)),
+                    go_all,
+                );
+            }
         }
 
         if !parsed_ok.is_empty() {
-            super::linker::run_post_edge_passes(self, None, Some(root));
+            // Whole-warehouse PostPass is O(nodes/files). Overlay / tiny Complete cones skip it.
+            const TINY_DIRTY_CONE: usize = 64;
+            let cone = if used_overlay {
+                parsed_ok.len()
+            } else {
+                parsed_ok.len().saturating_add(reedge_extra.len())
+            };
+            if was_complete && (used_overlay || cone <= TINY_DIRTY_CONE) {
+                if used_overlay {
+                    println!(
+                        "⚡ Edit overlay: {} file(s) — skip whole-warehouse PostPass (stable ids + local CALL)",
+                        parsed_ok.len()
+                    );
+                } else {
+                    println!(
+                        "⚡ Dirty-cone edge ensure: {} file(s) + {} reverse-dep (cone={}) — skip whole-warehouse PostPass",
+                        parsed_ok.len(),
+                        reedge_extra.len(),
+                        cone
+                    );
+                }
+                self.mark_edge_inventory_closed();
+                self.mark_background_edge_build_complete();
+            } else {
+                if was_complete && cone > TINY_DIRTY_CONE {
+                    println!(
+                        "🔄 Dirty cone {} > {} — whole-warehouse PostPass (unsafe/large dirty)",
+                        cone, TINY_DIRTY_CONE
+                    );
+                }
+                super::linker::run_post_edge_passes(self, None, Some(root));
+            }
         }
 
         self.finalize_build();
@@ -479,12 +713,29 @@ impl CodeGraph {
 
         if files_to_process.is_empty() {
             // Surgical JIT with nothing left: do NOT re-run polyglot AC every Trace (1–2s serial).
-            // Full ensure (target_files=None) still finishes polyglot once then marks complete.
+            // Hop A: if already Complete, do not re-burn whole-warehouse PostPass on no-op ensure.
             if target_files.is_none() {
+                if self.is_edge_build_complete() {
+                    println!(
+                        "⚡ ensure_call_graph: Complete + 0 files need edges — skip (no full-tree edge burn)"
+                    );
+                    return;
+                }
+                // Inventory closed but stamp incomplete: finish PostPass once then stamp.
                 super::linker::run_post_edge_passes(self, None, Some(root));
                 self.mark_background_edge_build_complete();
             }
             return;
+        }
+
+        // Log cone size so L timings attribute dirty vs full-tree.
+        if target_files.is_none() {
+            let inventory = self.file_hashes.len().max(1);
+            println!(
+                "🔗 ensure_call_graph dirty cone: {}/{} edgeable files need edges",
+                files_to_process.len(),
+                inventory
+            );
         }
 
         // Surgical = targeted list. Cap so a buggy caller cannot re-FullEdge 4k files
@@ -849,6 +1100,15 @@ fn run_background_full_edge_build_inner(
             t.thread_active.store(false, Ordering::Relaxed);
         }
         return false;
+    }
+
+    // Fail fast if Complete cannot be persisted (root-owned Docker cache thrash).
+    if let Err(e) = crate::snooper::probe_butler_cache_dir_writable(&root) {
+        eprintln!(
+            "⚠️  FullEdge preflight: cache not writable for {} — {e}",
+            root.display()
+        );
+        // Still run in-memory so Trace can use edges this session; save will re-warn.
     }
 
     // Fresh compile: drop prior edge object files for this root.
@@ -1598,6 +1858,95 @@ mod edge_budget_tests {
         assert!(
             g.callers(&callee_id).iter().any(|id| id == &parent_id),
             "after callee-only update, reverse must still list parent"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Hop B: Complete warehouse + single-file edit uses overlay; stable callee Id keeps A↔B.
+    #[test]
+    fn overlay_edit_callee_preserves_caller_edge() {
+        let dir = std::env::temp_dir().join(format!(
+            "butler_overlay_tri_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let path_b = src.join("ov_b.rs");
+        let path_a = src.join("ov_a.rs");
+        let callee = "butler_ov_callee";
+        let parent = "butler_ov_parent";
+        std::fs::write(
+            &path_b,
+            format!("#[allow(dead_code)]\npub fn {callee}() {{}}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            &path_a,
+            format!(
+                "#[allow(dead_code)]\npub fn {parent}() {{\n    {callee}();\n}}\n"
+            ),
+        )
+        .unwrap();
+
+        let mut g = CodeGraph::new();
+        g.update_files_batch(&[path_a.clone(), path_b.clone()], &dir, false);
+        // Simulate settled Complete warehouse (overlay gate).
+        g.mark_edge_inventory_closed();
+        g.mark_background_edge_build_complete();
+        assert!(g.is_edge_build_complete());
+
+        let callee_id_before = g
+            .nodes
+            .values()
+            .find(|b| b.name == callee && b.kind.contains("function"))
+            .map(|b| b.id.clone())
+            .expect("callee before");
+        let parent_id = g
+            .nodes
+            .values()
+            .find(|b| b.name == parent && b.kind.contains("function"))
+            .map(|b| b.id.clone())
+            .expect("parent before");
+        let callers_before = g.callers(&callee_id_before).len();
+        assert!(callers_before >= 1, "precondition: at least one caller");
+
+        // Edit B body only (name/kind preserved → stable id).
+        std::fs::write(
+            &path_b,
+            format!("#[allow(dead_code)]\npub fn {callee}() {{\n  // touch\n}}\n"),
+        )
+        .unwrap();
+        g.update_single_file(&path_b, &dir, true);
+
+        let callee_id_after = g
+            .nodes
+            .values()
+            .find(|b| b.name == callee && b.kind.contains("function"))
+            .map(|b| b.id.clone())
+            .expect("callee after overlay");
+        assert_eq!(
+            callee_id_before, callee_id_after,
+            "overlay must reuse stable id when name+kind preserved"
+        );
+        assert!(
+            g.children(&parent_id).iter().any(|id| id == &callee_id_after),
+            "A→B CALL must remain after overlay edit of B"
+        );
+        assert!(
+            g.callers(&callee_id_after).iter().any(|id| id == &parent_id),
+            "B reverse must still list A after overlay"
+        );
+        assert!(
+            g.callers(&callee_id_after).len() >= callers_before,
+            "caller census must not soft-thin without source loss (before={} after={})",
+            callers_before,
+            g.callers(&callee_id_after).len()
+        );
+        assert!(
+            g.is_edge_build_complete(),
+            "overlay path must leave warehouse Complete"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

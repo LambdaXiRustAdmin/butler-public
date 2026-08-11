@@ -91,6 +91,7 @@ pub mod token_manager;
 
 /// File-system watcher for automatic graph re-scanning on file changes.
 pub mod watcher;
+pub mod live_tree;
 
 /// Language-specific parsers and edge collectors (Rust, Python).
 pub mod lang;
@@ -152,7 +153,8 @@ pub mod clusters;
 pub use project_paths::ProjectPaths;
 pub use butler_cache_policy::{
     assert_butler_cache_writable, butler_cache_write_forbidden_reason, ensure_project_butler_cache_dir,
-    ensure_project_butler_dir, ALLOW_NESTED_ENV as BUTLER_ALLOW_NESTED_CACHE_ENV,
+    ensure_project_butler_dir, probe_butler_cache_dir_writable,
+    ALLOW_NESTED_ENV as BUTLER_ALLOW_NESTED_CACHE_ENV,
 };
 pub use path_policy::{
     bundled_vendor_dir_segments_owned, bundled_vendor_skip_patterns, is_bundled_vendor_dir_segment,
@@ -214,7 +216,7 @@ pub use context::{get_context, ContextOptions};
 pub use composer::{compose, compose_context, ComposedContext, ContextMetadata};
 
 /// Re-exported file-system watcher from [`watcher`].
-pub use watcher::start_watcher;
+pub use watcher::{start_watcher, start_watcher_cancellable};
 
 /// Re-exported background edge build coordinator from [`builder`].
 pub use builder::run_background_full_edge_build;

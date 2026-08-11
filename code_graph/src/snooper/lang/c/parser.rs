@@ -31,15 +31,10 @@ pub fn parse(
 
     let mut blocks = Vec::new();
     let config = super::super::generic_parser::VisitConfig {
+        // Product definition-tier (Hop A); prototypes added via collect_function_prototypes.
         interesting_kinds: &[
             "function_definition",
             "struct_specifier",
-            "if_statement",
-            "for_statement",
-            "while_statement",
-            "call_expression",
-            "return_statement",
-            "expression_statement",
         ],
         lang: "c",
         extract_name: ast_shared::extract_name,

@@ -183,7 +183,7 @@ use code_graph::snooper::scanner::{get_skip_patterns, scan_workspace, should_sca
 #[test]
 fn test_get_skip_patterns_includes_defaults() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest.parent().unwrap(); // go up to workspace root
+    let root = manifest.parent().unwrap(); // go up to lambda-wisperer root
 
     // After refactor, pass the config defaults (now owned by ButlerSettings in cli).
     // For this test we simulate the full defaults list (must match cli/src/config.rs default).
@@ -265,6 +265,80 @@ fn test_scan_workspace_on_test_data() {
         "ensure_call_graph must preserve the node set"
     );
     // (In a real project with fn calls, g.edges would now be populated.)
+}
+
+/// Hop A: Complete + no files needing edges must not re-run full ensure / PostPass.
+#[test]
+fn test_ensure_call_graph_noop_when_complete() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test_data = manifest.join("examples/test_data");
+    let config_skips: Vec<String> = vec![];
+
+    let graph = scan_workspace(&test_data, None, &config_skips);
+    let mut g = graph.clone();
+    g.ensure_call_graph(&test_data, &config_skips, None);
+    assert!(
+        g.is_edge_build_complete(),
+        "first full ensure should stamp Complete"
+    );
+    let edges_after = g.total_edges();
+    let files_edged = g.files_with_edges.len();
+
+    // Second full ensure must be a no-op (Hop A skip path).
+    g.ensure_call_graph(&test_data, &config_skips, None);
+    assert!(g.is_edge_build_complete());
+    assert_eq!(
+        g.total_edges(),
+        edges_after,
+        "no-op ensure must not change edge count"
+    );
+    assert_eq!(
+        g.files_with_edges.len(),
+        files_edged,
+        "no-op ensure must not change files_with_edges"
+    );
+}
+
+/// Hop A: surgical dirty-style re-edge only touches targeted files (+ reverse deps).
+#[test]
+fn test_update_files_batch_dirty_cone_preserves_other_edges() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test_data = manifest.join("examples/test_data");
+    let config_skips: Vec<String> = vec![];
+
+    let graph = scan_workspace(&test_data, None, &config_skips);
+    let mut g = graph.clone();
+    g.ensure_call_graph(&test_data, &config_skips, None);
+    assert!(g.is_edge_build_complete());
+
+    let rust_file = test_data.join("rust_example.rs");
+    let py_rel = PathBuf::from("python_example.py");
+    let rust_rel = PathBuf::from("rust_example.rs");
+    let py_had_edges = g.file_has_edges(&py_rel) || g.file_has_edges(&test_data.join("python_example.py"));
+
+    // Re-edge only the rust file (dirty cone of 1).
+    g.update_files_batch(&[rust_file.clone()], &test_data, false);
+
+    assert!(
+        g.files_with_edges
+            .iter()
+            .any(|p| p.ends_with("rust_example.rs") || p == &rust_rel || p == &rust_file)
+            || g.file_has_edges(&rust_rel)
+            || g.file_has_edges(&rust_file),
+        "dirty file should be in files_with_edges after dirty-cone update (got {:?})",
+        g.files_with_edges
+    );
+    // Other files' edge inventory should remain if they had edges.
+    if py_had_edges {
+        assert!(
+            g.file_has_edges(&py_rel) || g.file_has_edges(&test_data.join("python_example.py")),
+            "non-dirty file must keep files_with_edges after tiny dirty cone"
+        );
+    }
+    assert!(
+        g.is_edge_build_complete(),
+        "tiny dirty cone on Complete warehouse stays Complete"
+    );
 }
 
 #[test]

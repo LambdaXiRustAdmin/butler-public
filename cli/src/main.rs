@@ -522,8 +522,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         graph.edges.len(),
                         graph.is_edge_build_complete()
                     );
-                    if full && !graph.is_edge_build_complete() {
-                        println!("  --full: running ensure_call_graph (can take a while)…");
+                    // Hop A: default is dirty-cone / skip when Complete.
+                    // Force full-tree edge ensure only via BUTLER_FORCE_FULL_EDGE (or incomplete).
+                    let force_full_edge = std::env::var("BUTLER_FORCE_FULL_EDGE").is_ok();
+                    if full && force_full_edge {
+                        println!(
+                            "  --full: BUTLER_FORCE_FULL_EDGE — clearing edge inventory for full-tree ensure…"
+                        );
+                        graph.files_with_edges.clear();
+                        graph.background_edge_build_complete = false;
+                        graph.background_edge_build_active = false;
+                        graph.background_edge_build_state =
+                            code_graph::snooper::BackgroundEdgeBuildState::Incomplete;
+                        // Keep nodes/edges for structure; ensure will recollect all files.
+                        // Clear adjacency so we do not double-count while files_with_edges is empty.
+                        graph.edges.clear();
+                        graph.reverse.clear();
+                        graph.clear_bridges();
+                        println!("  --full: running ensure_call_graph (forced full-tree)…");
+                        graph.ensure_call_graph(&abs, skips, None);
+                        if let Err(e) = save_graph(&graph, &abs) {
+                            eprintln!("  warn: save_graph failed: {e}");
+                        }
+                        println!(
+                            "  full edges: {} edges, complete={}",
+                            graph.edges.len(),
+                            graph.is_edge_build_complete()
+                        );
+                    } else if full && !graph.is_edge_build_complete() {
+                        println!("  --full: running ensure_call_graph (incomplete edges; dirty cone if partial)…");
                         graph.ensure_call_graph(&abs, skips, None);
                         if let Err(e) = save_graph(&graph, &abs) {
                             eprintln!("  warn: save_graph failed: {e}");
@@ -534,7 +561,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             graph.is_edge_build_complete()
                         );
                     } else if full {
-                        println!("  --full: edges already complete; cache left as-is");
+                        println!("  --full: edges already complete; cache left as-is (Hop A no-op skip)");
                     }
                 }
                 println!(

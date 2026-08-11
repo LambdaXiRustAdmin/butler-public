@@ -15,27 +15,30 @@
 //! **P3.1 stages:** [`ingress`] · project gate · [`load_lobby`] · [`front_door`] ·
 //! [`serve_prep`] · [`surgical_phase`] · [`compose_path`].
 
-mod resolve;
-mod graph_admit;
 mod building;
-mod surgical;
+mod compose_path;
 mod dispatch;
 mod front_door;
+mod graph_admit;
 mod ingress;
 mod load_lobby;
+mod resolve;
 mod serve_prep;
+mod surgical;
 mod surgical_phase;
-mod compose_path;
 
-use resolve::{try_project_gate, ProjectGateOutcome, ProjectGateReady};
+use compose_path::run_compose_path;
 use front_door::{try_front_door, FrontDoorContinue, FrontDoorOutcome};
 use ingress::{run_ingress, IngressOutcome, IngressReady};
 use load_lobby::{try_load_lobby, LoadLobbyOutcome, LoadLobbyReady};
+use resolve::{try_project_gate, ProjectGateOutcome, ProjectGateReady};
 use serve_prep::{try_serve_prep, ServePrepOutcome};
 use surgical_phase::{run_surgical_phase, SurgicalPhaseOutcome};
-use compose_path::run_compose_path;
 
-pub use graph_admit::{collect_warm_roots, warm_project_root, warehouse_idle_reaper_tick};
+pub use graph_admit::{
+    collect_warm_roots, sleep_warehouse, warehouse_idle_reaper_tick, warehouse_sleep_tick,
+    warm_project_root,
+};
 
 use axum::{http::StatusCode, Json};
 use std::time::Instant;
@@ -69,10 +72,7 @@ fn ensure_butler_dir(root: &std::path::Path) -> Option<std::path::PathBuf> {
     match code_graph::snooper::ensure_project_butler_dir(root) {
         Ok(dir) => Some(dir),
         Err(e) => {
-            eprintln!(
-                "⚠️  skip .butler under {}: {e}",
-                root.display()
-            );
+            eprintln!("⚠️  skip .butler under {}: {e}", root.display());
             None
         }
     }
@@ -145,7 +145,9 @@ pub fn select_blocks(
     code_graph::snooper::select_blocks(graph, prompt, use_neural_scores, blend)
 }
 
-pub(super) fn selection_blend_from_settings(settings: &cli::config::ButlerSettings) -> NeuralSelectionBlend {
+pub(super) fn selection_blend_from_settings(
+    settings: &cli::config::ButlerSettings,
+) -> NeuralSelectionBlend {
     NeuralSelectionBlend {
         text_weight: settings.agent.neural_text_weight,
         neural_weight: settings.agent.neural_score_weight,
@@ -154,10 +156,8 @@ pub(super) fn selection_blend_from_settings(settings: &cli::config::ButlerSettin
 
 // --- Private helpers (cohesive, minimal clones) ---
 
-
 /// Re-export: goal/mode → orchestrate path (see [`crate::server::mode_intent`]).
 pub use crate::server::mode_intent::wants_orchestrate_path;
-
 
 /// Core context retrieval logic (stage wire only — P3.1).
 /// Delegates to ingress → project gate → load lobby → front door → serve prep →

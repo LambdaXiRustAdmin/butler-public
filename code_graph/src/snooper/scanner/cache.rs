@@ -20,11 +20,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::snooper::parse_file;
 use crate::snooper::{BackgroundEdgeBuildState, CodeGraph};
 
-use super::super::lang;
-use super::{get_skip_patterns, scan_workspace, should_scan_path_under};
+use super::{get_skip_patterns, scan_workspace};
 
 /// After load: distinguish a fully-built cache from a partial/cancelled mid-build snapshot.
 fn finalize_loaded_graph_state(graph: &mut CodeGraph, project_root: &Path) {
@@ -127,9 +125,24 @@ fn finalize_loaded_graph_state(graph: &mut CodeGraph, project_root: &Path) {
 /// Bumped (v12): dual-stack packages under examples/ stay in inventory (L2.1).
 /// Bumped (v13): dual-stack under examples/ includes native+TS/JS (Tauri IPC apps, L2.3).
 /// Bumped (v14): pybind binding roots keep `tests/` (m.def Export fixtures, A′.5).
-pub const GRAPH_SCHEMA_VERSION: u32 = 14;
+/// Bumped 15: product warehouse definition-tier inventory only (drop statement /
+/// expression AST kinds from permanent nodes). Old Complete caches full-rescan.
+pub const GRAPH_SCHEMA_VERSION: u32 = 15;
 
 /// Edge-building semantics (call/usage rules, linker passes).
+///
+/// # Bump policy (Complete cache reliability)
+///
+/// **Bump when** stored CALL/bridge edges would be **wrong or incomplete** under new rules
+/// (who-connects-to-whom changes). Examples: link precision, bridge kinds, same-lang maps,
+/// import/barrel resolution, AC default that changes edge population.
+///
+/// **Do not bump** for pure refactors, log-only changes, or Trace/pack presentation.
+/// Layout / `BlockInfo` serde changes → [`GRAPH_SCHEMA_VERSION`] (full rescan), not edge_sem.
+///
+/// **Mismatch policy:** exact version match, or **drop edges** (keep skeleton). No migrators.
+/// See `EDGE_SEM_POLICY.md` in this package.
+///
 /// Bump when edge logic changes but the serde layout is unchanged.
 /// Mismatch keeps nodes + file/module hashes and forces an edge rebuild (no full rescan).
 /// Bumped: CALLS resolve to function-like only (no type/struct callees) + edge persist.
@@ -193,11 +206,18 @@ pub fn save_graph(graph: &CodeGraph, root: impl AsRef<Path>) -> std::io::Result<
 /// Used by [`save_graph_async`] after a single snapshot under the read lock.
 pub fn save_graph_owned(slim: CodeGraph, root: impl AsRef<Path>) -> std::io::Result<()> {
     let root = root.as_ref();
-    // Refuse litter under src/examples/tests (see butler_cache_policy).
+    // Refuse litter under src/examples/tests; probe real FS writability (root-owned Docker trap).
     let cache_dir = crate::snooper::ensure_project_butler_cache_dir(root)?;
     let cache_file = cache_dir.join("graph.bin");
     // Progressive multi-bin first (borrows slim), then consume into graph.bin.
-    let _ = super::shards::save_shards(&slim, root);
+    // Must not swallow errors — partial shard write + failed graph.bin poisons trust.
+    super::shards::save_shards(&slim, root).map_err(|e| {
+        eprintln!(
+            "⚠️  save_shards failed for {} — warehouse not updated: {e}",
+            root.display()
+        );
+        e
+    })?;
     let n = slim.nodes.len();
     let cached = CachedGraph {
         version: GRAPH_SCHEMA_VERSION,
@@ -205,7 +225,16 @@ pub fn save_graph_owned(slim: CodeGraph, root: impl AsRef<Path>) -> std::io::Res
         graph: slim,
     };
     let bytes = bincode::serialize(&cached).map_err(std::io::Error::other)?;
-    std::fs::write(&cache_file, bytes)?;
+    std::fs::write(&cache_file, bytes).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            eprintln!(
+                "⚠️  graph.bin write denied at {} — Complete edges stay in RAM only; \
+                 next open may thrash FullEdge until cache is writable (chown .butler).",
+                cache_file.display()
+            );
+        }
+        e
+    })?;
     println!(
         "💾 Graph cached to {} (schema v{}, edge_sem v{}, slim sources, {} blocks)",
         cache_file.display(),
@@ -250,10 +279,20 @@ pub fn save_graph_async(graph: Arc<std::sync::RwLock<CodeGraph>>, root: PathBuf)
                         t0.elapsed()
                     );
                 }
-                Err(e) => eprintln!(
-                    "⚠️  background graph save failed for {}: {e}",
-                    root.display()
-                ),
+                Err(e) => {
+                    eprintln!(
+                        "⚠️  background graph save failed for {}: {e}",
+                        root.display()
+                    );
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        eprintln!(
+                            "   → Cache not writable by this process. After FullEdge, disk still has \
+                             old edge_sem → next warm drops edges and rebuilds forever. \
+                             Fix ownership then re-warm: chown -R \"$(whoami)\" \"{}/.butler\"",
+                            root.display()
+                        );
+                    }
+                }
             }
         });
 }
@@ -361,17 +400,20 @@ pub fn load_graph(
             current_hashes.len(),
             hash_t0.elapsed()
         );
-        let mut dirty = 0usize;
+        let mut dirty_paths: Vec<PathBuf> = Vec::new();
         for (pstr, &cur_h) in &current_hashes {
             if g.file_hashes.get(pstr).is_none_or(|&old| old != cur_h) {
-                dirty += 1;
+                dirty_paths.push(PathBuf::from(pstr));
             }
         }
         for pstr in g.file_hashes.keys() {
             if !current_hashes.contains_key(pstr) {
-                dirty += 1;
+                dirty_paths.push(PathBuf::from(pstr));
             }
         }
+        dirty_paths.sort();
+        dirty_paths.dedup();
+        let dirty = dirty_paths.len();
         if dirty == 0 {
             // Poisoned empty Complete: skip rules once wiped inventory but stamped Complete.
             // After path-policy fixes, refuse to trust 0-node caches when sources exist.
@@ -398,10 +440,45 @@ pub fn load_graph(
                 return g;
             }
         } else {
-            println!(
-                "🔄 Shard cache stale ({} dirty file hashes) — falling through to graph.bin / rescan",
-                dirty
-            );
+            // Hop A: small dirty set on a warehouse that already has edges → dirty-cone
+            // ensure only (update_files_batch + reverse-dep). Full rescan/ensure only when
+            // dirty is huge, edges empty, force-full, or force-rescan env.
+            let force_full = std::env::var("BUTLER_FORCE_FULL_EDGE").is_ok();
+            let threshold = (g.file_hashes.len() / 3).max(50);
+            let can_cone = !force_full
+                && dirty <= threshold
+                && !g.nodes.is_empty()
+                && (!g.edges.is_empty() || g.is_edge_build_complete());
+            if can_cone {
+                println!(
+                    "🔄 Hop A dirty cone: {} file(s) (threshold {}) — incremental edge ensure, keep warehouse",
+                    dirty, threshold
+                );
+                let inc_start = Instant::now();
+                if let Ok(mut updated) =
+                    incremental_reparse(g, &dirty_paths, root, config_skip_directories)
+                {
+                    println!(
+                        "⚡ Dirty-cone ensure done in {} ms ({} file(s))",
+                        inc_start.elapsed().as_millis(),
+                        dirty
+                    );
+                    updated.rebuild_module_hashes();
+                    finalize_loaded_graph_state(&mut updated, root);
+                    let _ = save_graph(&updated, root);
+                    return updated;
+                }
+                println!(
+                    "⚠️  Dirty-cone ensure failed — falling through to graph.bin / rescan"
+                );
+            } else {
+                println!(
+                    "🔄 Shard cache stale ({} dirty file hashes{}; threshold {}) — falling through to graph.bin / rescan",
+                    dirty,
+                    if force_full { ", FORCE_FULL_EDGE" } else { "" },
+                    threshold
+                );
+            }
         }
     }
 
@@ -537,192 +614,34 @@ pub fn load_graph(
     graph
 }
 
-/// Minimal practical incremental reparse: remove all blocks belonging to the dirty files,
-/// re-parse only those files, re-insert the new blocks, then re-run the edge builders
-/// and hub computation on the updated graph.
+/// Hop A dirty-cone ensure: re-parse + re-edge only `dirty_files` (+ reverse dependents
+/// for CALL soundness) via [`CodeGraph::update_files_batch`].
 ///
-/// **Path dialect:** `dirty_files` keys are repo-relative (from `file_hashes`). Always
-/// resolve via `root` before `read_to_string` / `exists` — bare relative paths fail when
-/// the process CWD is not the project (Docker butler CWD is `/project`), which used to
-/// silently drop every added file (click: examples-only warehouse, Group/Command miss).
+/// **Does not** full-tree ensure. Whole-warehouse PostPass is skipped when the warehouse
+/// was Complete and the cone is tiny (see `update_files_batch`).
+///
+/// **Path dialect:** `dirty_files` keys are repo-relative (from `file_hashes`).
+/// `update_files_batch` resolves via `ProjectPaths` under `root`.
 fn incremental_reparse(
     mut graph: CodeGraph,
     dirty_files: &[std::path::PathBuf],
     root: &std::path::Path,
-    config_skip_directories: &[String],
+    _config_skip_directories: &[String],
 ) -> Result<CodeGraph, String> {
-    use std::collections::HashSet;
-
-    let pp = crate::snooper::project_paths::ProjectPaths::new(root);
-    // Normalize dirty keys for block.file matching (also repo-relative).
-    let dirty_keys: HashSet<String> = dirty_files
-        .iter()
-        .map(|p| pp.key(p))
-        .filter(|k| !k.is_empty())
-        .collect();
-
-    // 1. Remove all blocks (and their edges) that came from dirty files
-    let ids_to_remove: Vec<_> = graph
-        .nodes
-        .iter()
-        .filter(|(_, b)| dirty_keys.contains(&pp.key(&b.file)))
-        .map(|(id, _)| id.clone())
-        .collect();
-
-    for id in &ids_to_remove {
-        graph.nodes.remove(id);
-        graph.edges.remove(id);
-        graph.reverse.remove(id);
+    if dirty_files.is_empty() {
+        return Ok(graph);
     }
-
-    // Also clean up reverse/forward edges that pointed to removed nodes
-    for targets in graph.edges.values_mut() {
-        targets.retain(|id| !ids_to_remove.contains(id));
-    }
-    for sources in graph.reverse.values_mut() {
-        sources.retain(|id| !ids_to_remove.contains(id));
-    }
-
-    // 2. Re-parse only the dirty (or new) files
-    let skip_patterns = get_skip_patterns(root, config_skip_directories);
-    let mut parsed_ok = 0usize;
-    let mut parse_fail = 0usize;
-    let mut read_fail = 0usize;
-    for dirty in dirty_files {
-        let rel = PathBuf::from(pp.key(dirty));
-        let abs = if dirty.is_absolute() {
-            dirty.clone()
-        } else {
-            root.join(&rel)
-        };
-        // Skip policy relative to project root (not absolute path prefix).
-        if !should_scan_path_under(&abs, &skip_patterns, Some(root))
-            && !should_scan_path_under(&rel, &skip_patterns, Some(root))
-        {
-            continue;
-        }
-        if !abs.is_file() {
-            // Deleted (or never present): drop hash; nodes already purged above.
-            graph.file_hashes.remove(&pp.key(&rel));
-            continue;
-        }
-        match std::fs::read_to_string(&abs) {
-            Ok(source) => {
-                let pstr = pp.key(&rel);
-                graph
-                    .file_hashes
-                    .insert(pstr, CodeGraph::content_hash(&source));
-
-                // Parse with repo-relative path so BlockInfo.file / Ids stay portable.
-                match parse_file(&rel, &source) {
-                    Ok(parsed) => {
-                        parsed_ok += 1;
-                        for block in &parsed.blocks {
-                            graph.add_block(block.clone());
-                        }
-                        // For incremental, also rebuild edges for the changed files.
-                        if let Some(ref tree) = parsed.tree {
-                            let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            if ext == "rs" {
-                                lang::rust::build_call_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                                lang::rust::build_usage_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                            } else if ext == "py" {
-                                lang::python::build_call_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                                lang::python::build_usage_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                            } else if ext == "ts"
-                                || ext == "tsx"
-                                || ext == "js"
-                                || ext == "jsx"
-                                || ext == "svelte"
-                            {
-                                lang::typescript::build_call_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                                lang::typescript::build_usage_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                            } else if ext == "go" {
-                                lang::go::build_call_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                                lang::go::build_usage_edges(
-                                    &parsed.blocks,
-                                    &parsed.source,
-                                    tree,
-                                    &mut graph,
-                                );
-                            } else if lang::c_family::is_c_family_ext(ext) {
-                                lang::build_c_family_edges(
-                                    &rel,
-                                    &parsed.source,
-                                    &parsed.blocks,
-                                    tree,
-                                    &mut graph,
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        parse_fail += 1;
-                        eprintln!(
-                            "⚠️ incremental reparse: parse failed {}: {e:?}",
-                            rel.display()
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                read_fail += 1;
-                eprintln!(
-                    "⚠️ incremental reparse: read failed {}: {e}",
-                    abs.display()
-                );
-            }
-        }
-    }
-
     println!(
-        "🔄 Incremental reparse: {} ok, {} read_fail, {} parse_fail (dirty={})",
-        parsed_ok,
-        read_fail,
-        parse_fail,
+        "🔄 Incremental dirty-cone reparse via update_files_batch ({} file(s))...",
         dirty_files.len()
     );
-
-    graph.rebuild_module_hashes();
-    // Nodes grew — stamp name_index before Complete/serve.
-    graph.invalidate_call_name_maps();
-    graph.finalize_build();
-    crate::snooper::linker::run_post_edge_passes(&mut graph, None, Some(root));
-
+    let t0 = Instant::now();
+    // update_files_batch: evict → reparse → global name maps → edges for dirty + reverse-deps.
+    graph.update_files_batch(dirty_files, root, true);
+    println!(
+        "🔄 Incremental dirty-cone done in {} ms (dirty={})",
+        t0.elapsed().as_millis(),
+        dirty_files.len()
+    );
     Ok(graph)
 }

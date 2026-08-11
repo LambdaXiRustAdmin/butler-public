@@ -1,26 +1,37 @@
 //! Graph admit / warm / watcher / LRU / background edge (P3 peel).
-//! Zero intentional behavior change.
+//! Hop B: warehouse sleep (idle + hot-root budget) keeps Complete on disk.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use code_graph::snooper::normalize_path;
 use code_graph::snooper::scanner::save_graph_owned;
-use code_graph::{graph_cache_exists, load_graph, scan_workspace_with_waves, start_watcher};
+use code_graph::{
+    graph_cache_exists, load_graph, scan_workspace_with_waves, start_watcher_cancellable,
+};
 
 use crate::server::build_status::{get_or_create_telemetry, sync_telemetry_if_graph_ready};
 use crate::server::paths::*;
 use crate::server::state::*;
+use cli::session_state::load_last_state;
 use crate::vprintln;
 
 static WATCHED_ROOTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Per-root cancel flags so sleep can stop `butler-watcher-*` without killing other PIDs.
+static WATCHER_CANCELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn watcher_cancels() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    WATCHER_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Register live FS watcher **off the request critical path**.
 ///
 /// First gecko/inotify setup can take many seconds; never block Trace/Arch lobby on it.
 /// Dedup via `WATCHED_ROOTS` still happens synchronously so we only spawn once.
+/// Hop B: cancel token enables sleep without orphan watchers.
 pub(super) fn ensure_watcher(
     root: &str,
     graph: Arc<std::sync::RwLock<code_graph::CodeGraph>>,
@@ -34,15 +45,29 @@ pub(super) fn ensure_watcher(
     if !should_start {
         return;
     }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut m = watcher_cancels().lock().unwrap_or_else(|e| e.into_inner());
+        m.insert(root.to_string(), Arc::clone(&cancel));
+    }
     let root_owned = root.to_string();
     let graph_for_thread = Arc::clone(&graph);
     let skips_for_thread = config_skip_directories.clone();
+    let cancel_thread = Arc::clone(&cancel);
     match std::thread::Builder::new()
         .name("butler-watcher-boot".into())
         .spawn(move || {
             let t0 = std::time::Instant::now();
-            vprintln!("👀 Starting live watcher (detached) for root: {}", root_owned);
-            start_watcher(&root_owned, graph_for_thread, skips_for_thread);
+            vprintln!(
+                "👀 Starting live watcher (detached) for root: {}",
+                root_owned
+            );
+            start_watcher_cancellable(
+                &root_owned,
+                graph_for_thread,
+                skips_for_thread,
+                Some(cancel_thread),
+            );
             vprintln!(
                 "👀 Watcher boot finished for {} in {:.1}ms",
                 root_owned,
@@ -56,9 +81,26 @@ pub(super) fn ensure_watcher(
                 "⚠️ watcher-boot spawn failed ({e}); starting sync for {}",
                 root
             );
-            start_watcher(root, graph, config_skip_directories);
+            start_watcher_cancellable(root, graph, config_skip_directories, Some(cancel));
         }
     }
+}
+
+/// True if `root` is the remembered last_state project (pin-preferred under light pressure).
+pub(super) fn is_last_state_root(root: &str) -> bool {
+    let Some(last) = load_last_state().last_project else {
+        return false;
+    };
+    let last_n = normalize_path(&last);
+    let root_n = normalize_path(root);
+    if last_n.is_empty() || root_n.is_empty() {
+        return false;
+    }
+    if last_n == root_n {
+        return true;
+    }
+    // Path prefix / suffix tolerance (absolute vs relative last_state).
+    root_n.ends_with(&last_n) || last_n.ends_with(&root_n)
 }
 
 /// Roots that must stay warm (boot warm_roots + BUTLER_WARM_ROOTS).
@@ -76,8 +118,15 @@ pub(super) fn pinned_warm_roots(state: &AppState) -> std::collections::HashSet<S
 }
 
 /// True if this root is unsafe to drop from RAM (scan / live FullEdge / pinned warm).
-pub(super) fn must_keep_graph_resident(state: &AppState, root: &str, pinned: &std::collections::HashSet<String>) -> bool {
-    if pinned.iter().any(|p| p == root || root.starts_with(p) || p.starts_with(root)) {
+pub(super) fn must_keep_graph_resident(
+    state: &AppState,
+    root: &str,
+    pinned: &std::collections::HashSet<String>,
+) -> bool {
+    if pinned
+        .iter()
+        .any(|p| p == root || root.starts_with(p) || p.starts_with(root))
+    {
         return true;
     }
     if state.in_progress.blocking_read().contains_key(root) {
@@ -104,7 +153,15 @@ pub(super) fn must_keep_graph_resident(state: &AppState, root: &str, pinned: &st
 /// Touch graph root in the warm LRU (most-recent at back). Evict cold roots over cap.
 ///
 /// Never evicts: boot warm roots, Phase-1 in_progress, or live FullEdge roots.
+/// Hop B: records last-touch for idle sleep; budget eviction uses [`sleep_warehouse`].
 pub(super) fn touch_graph_lru(state: &AppState, root: &str) {
+    {
+        let mut touches = state
+            .graph_last_touch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        touches.insert(root.to_string(), Instant::now());
+    }
     let max = state.settings.server.max_cached_graphs;
     let pinned = pinned_warm_roots(state);
     let mut lru = match state.graph_lru.lock() {
@@ -128,10 +185,22 @@ pub(super) fn touch_graph_lru(state: &AppState, root: &str) {
             lru.push_back(evict);
             break;
         }
+        // Prefer sleeping non-last_state first under budget pressure.
+        if is_last_state_root(&evict)
+            && lru
+                .iter()
+                .any(|r| r != root && !must_keep_graph_resident(state, r, &pinned) && !is_last_state_root(r))
+        {
+            lru.push_back(evict);
+            continue;
+        }
         if must_keep_graph_resident(state, &evict, &pinned) {
             lru.push_back(evict);
             // All remaining protected → stop (avoid spin).
-            if lru.iter().all(|r| must_keep_graph_resident(state, r, &pinned)) {
+            if lru
+                .iter()
+                .all(|r| must_keep_graph_resident(state, r, &pinned))
+            {
                 vprintln!(
                     "🧊 Graph cache over cap ({} > {}) but all roots pinned/live — holding {}",
                     lru.len(),
@@ -142,20 +211,113 @@ pub(super) fn touch_graph_lru(state: &AppState, root: &str) {
             }
             continue;
         }
+        drop(lru);
+        sleep_warehouse(state, &evict, "budget");
+        lru = match state.graph_lru.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+    }
+}
+
+/// Hop B: drop in-RAM warehouse + watchers for `root`; **keep Complete on disk**.
+///
+/// Reason is logged (`idle` | `budget`). Never deletes `.butler` cache.
+pub fn sleep_warehouse(state: &AppState, root: &str, reason: &str) {
+    // Stop watcher first so we do not thrash on a graph about to leave RAM.
+    if let Ok(mut cancels) = watcher_cancels().lock() {
+        if let Some(c) = cancels.remove(root) {
+            c.store(true, Ordering::Relaxed);
+        }
+    }
+    if let Ok(mut watched) = WATCHED_ROOTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        watched.remove(root);
+    }
+
+    let mut removed_graph = false;
+    {
         let mut cache = state.graphs.blocking_write();
-        if cache.remove(&evict).is_some() {
-            vprintln!("🧊 Evicted cold graph from memory: {}", evict);
+        if cache.remove(root).is_some() {
+            removed_graph = true;
         }
-        drop(cache);
-        // Drop telemetry / cancel tokens for evicted root (best-effort)
-        if let Ok(mut m) = state.edge_build_status.try_write() {
-            m.remove(&evict);
+    }
+    if let Ok(mut m) = state.edge_build_status.try_write() {
+        m.remove(root);
+    }
+    if let Ok(mut m) = state.edge_build_cancels.try_write() {
+        if let Some(tok) = m.remove(root) {
+            tok.store(true, Ordering::Relaxed);
         }
-        if let Ok(mut m) = state.edge_build_cancels.try_write() {
-            if let Some(tok) = m.remove(&evict) {
-                tok.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+    }
+    if let Ok(mut lru) = state.graph_lru.lock() {
+        lru.retain(|r| r != root);
+    }
+    if let Ok(mut touches) = state.graph_last_touch.lock() {
+        touches.remove(root);
+    }
+
+    if removed_graph {
+        // Drop live Tree-sitter trees for this root (edit-native hot cache).
+        code_graph::snooper::live_tree::clear_root(Path::new(root));
+        println!(
+            "💤 Warehouse sleep: {} reason={} (Complete on disk retained; RAM+watchers dropped)",
+            root, reason
+        );
+        vprintln!(
+            "💤 sleep detail: root={} reason={} hot_cap={}",
+            root,
+            reason,
+            state.settings.server.max_cached_graphs
+        );
+    }
+}
+
+/// Idle sleep pass: non-pinned roots past idle timeout leave RAM (Hop B).
+pub fn warehouse_sleep_tick(state: &AppState) {
+    let idle_secs = state.settings.server.warehouse_idle_secs;
+    if idle_secs == 0 {
+        return; // disabled
+    }
+    let last_idle_secs = state
+        .settings
+        .server
+        .warehouse_last_idle_secs
+        .max(idle_secs);
+    let pinned = pinned_warm_roots(state);
+    let now = Instant::now();
+
+    let candidates: Vec<(String, Instant)> = {
+        let Ok(touches) = state.graph_last_touch.lock() else {
+            return;
+        };
+        touches
+            .iter()
+            .map(|(r, t)| (r.clone(), *t))
+            .collect()
+    };
+
+    // Sleep coldest first; prefer not sleeping last_state under light pressure.
+    let mut ordered = candidates;
+    ordered.sort_by_key(|(_, t)| *t);
+
+    for (root, touched) in ordered {
+        if must_keep_graph_resident(state, &root, &pinned) {
+            continue;
         }
+        let limit = if is_last_state_root(&root) {
+            last_idle_secs
+        } else {
+            idle_secs
+        };
+        let idle = now.duration_since(touched).as_secs();
+        if idle < limit {
+            continue;
+        }
+        // Light pressure: if only last_state is idle-eligible, still sleep it after last_idle.
+        sleep_warehouse(state, &root, "idle");
     }
 }
 
@@ -208,10 +370,8 @@ pub(super) fn spawn_async_graph_load(
                 p.summary_line(),
                 reason
             );
-            let current_file = Arc::new(std::sync::Mutex::new(Some(format!(
-                "deferred: {}",
-                reason
-            ))));
+            let current_file =
+                Arc::new(std::sync::Mutex::new(Some(format!("deferred: {}", reason))));
             let mut in_progress = state.in_progress.blocking_write();
             in_progress.insert(
                 root.to_string(),
@@ -297,7 +457,9 @@ pub(super) fn spawn_async_graph_load(
                     }
                     vprintln!(
                         "📡 Progressive L1 publish for {} ({} blocks, {} modules)",
-                        root_pub, n, modules
+                        root_pub,
+                        n,
+                        modules
                     );
                 };
                 scan_workspace_with_waves(
@@ -324,7 +486,9 @@ pub(super) fn spawn_async_graph_load(
             }
             vprintln!(
                 "✅ Async graph ready for {} ({} blocks, {} modules)",
-                root_spawn, n, modules
+                root_spawn,
+                n,
+                modules
             );
             in_progress_arc.blocking_write().remove(&root_spawn);
             // Persist off the ready path without locking the live warehouse.
@@ -363,11 +527,7 @@ pub(super) fn maybe_retry_pressure_deferred_load(
     root: &str,
     graph_rw: &Arc<std::sync::RwLock<code_graph::CodeGraph>>,
 ) {
-    let nodes = graph_rw
-        .try_read()
-        .ok()
-        .map(|g| g.nodes.len())
-        .unwrap_or(0);
+    let nodes = graph_rw.try_read().ok().map(|g| g.nodes.len()).unwrap_or(0);
     if nodes > 0 {
         return;
     }
@@ -538,12 +698,12 @@ pub(crate) fn ensure_background_edge_build(
         // Honest tolerance only: path twins / missing / empty — never "exists ⇒ edged".
         // Empty `attempted` must not become a path to false Complete.
         if !gg.is_edge_build_complete() {
-            let closed =
-                gg.reconcile_edge_inventory_tolerance(Some(Path::new(root)), &[]);
+            let closed = gg.reconcile_edge_inventory_tolerance(Some(Path::new(root)), &[]);
             if closed > 0 {
                 vprintln!(
                     "🧭 Edge inventory tolerance closed {} unedgeable slot(s) for {}",
-                    closed, root
+                    closed,
+                    root
                 );
             }
             // Only if *everything* left was truly unedgeable (missing/empty/twin).
@@ -577,8 +737,7 @@ pub(crate) fn ensure_background_edge_build(
             telemetry.state() != code_graph::snooper::BackgroundEdgeBuildState::Complete
                 && !(telemetry.percent() >= 100
                     && !telemetry.thread_active.load(Ordering::Relaxed)
-                    && telemetry.state()
-                        == code_graph::snooper::BackgroundEdgeBuildState::Complete)
+                    && telemetry.state() == code_graph::snooper::BackgroundEdgeBuildState::Complete)
         }
     };
 
@@ -641,14 +800,13 @@ pub(crate) fn ensure_background_edge_build(
 
     // WarehousePolice owns the mutation lane (EvePolice lesson). FullEdge is exclusive;
     // surgical JIT can run between edge batches without a second spawn_blocking war.
-    let resumes = telemetry_spawn
-        .resume_count
-        .fetch_add(1, Ordering::Relaxed);
+    let resumes = telemetry_spawn.resume_count.fetch_add(1, Ordering::Relaxed);
     telemetry_spawn.mark_job_started();
     if resumes > 0 {
         vprintln!(
             "🔁 FullEdge resume #{} for {} (incomplete → police queue)",
-            resumes, root
+            resumes,
+            root
         );
     }
     code_graph::snooper::warehouse_police().submit_full_edge(
@@ -665,16 +823,19 @@ pub(crate) fn ensure_background_edge_build(
     );
 }
 
-/// Idle reaper: when util is free, finish Incomplete edge jobs instead of thumb-twiddling.
+/// Idle reaper: resume Incomplete FullEdge when free, then Hop B warehouse sleep.
 ///
 /// Scans **graphs in RAM** (not only telemetry keys) so boot-warm Incomplete roots get
-/// FullEdge without waiting for a /context poke.
+/// FullEdge without waiting for a /context poke. Sleep drops idle/over-budget roots
+/// from RAM + watchers while keeping Complete on disk.
 pub fn warehouse_idle_reaper_tick(state: &AppState) {
     use code_graph::snooper::BackgroundEdgeBuildState;
     use std::sync::atomic::Ordering;
 
     let mut roots: Vec<String> = {
         let Ok(gmap) = state.graphs.try_read() else {
+            // Still attempt sleep if we can read touch map later.
+            warehouse_sleep_tick(state);
             return;
         };
         gmap.keys().cloned().collect()
@@ -741,5 +902,7 @@ pub fn warehouse_idle_reaper_tick(state: &AppState) {
         );
         ensure_background_edge_build(state, &root, &graph_rw);
     }
-}
 
+    // Hop B: after Incomplete resume pass, sleep idle / over-budget roots.
+    warehouse_sleep_tick(state);
+}

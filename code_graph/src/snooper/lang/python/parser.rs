@@ -28,19 +28,14 @@ pub fn parse(
     let root = tree.root_node();
 
     let mut blocks = Vec::new();
+    // Product warehouse definition-tier only (Hop A). Statement/expression AST
+    // kinds are training-grain — FullEdge still sees call sites via Tree-sitter
+    // queries on the file tree, not as permanent warehouse nodes.
     let config = super::super::generic_parser::VisitConfig {
         interesting_kinds: &[
             "function_definition",
             "class_definition",
             "async_function_definition",
-            // Richer for WL/edges:
-            "if_statement",
-            "for_statement",
-            "while_statement",
-            "call",
-            "return_statement",
-            "assignment",
-            "expression_statement",
         ],
         lang: "python",
         extract_name,
@@ -73,4 +68,80 @@ fn extract_name(node: &Node, source: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod definition_tier_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Product inventory must not materialize statement/expression AST as warehouse nodes.
+    #[test]
+    fn python_parse_emits_definition_kinds_only() {
+        let src = r#"
+def foo():
+    x = 1
+    bar()
+    if x:
+        return x
+
+class C:
+    def meth(self):
+        pass
+"#;
+        let parsed = parse(PathBuf::from("mod.py"), src).expect("parse");
+        assert!(!parsed.blocks.is_empty());
+        for b in &parsed.blocks {
+            assert!(
+                matches!(
+                    b.kind.as_str(),
+                    "function_definition" | "async_function_definition" | "class_definition"
+                ),
+                "non-definition product node: kind={} name={}",
+                b.kind,
+                b.name
+            );
+        }
+        let names: Vec<_> = parsed.blocks.iter().map(|b| b.name.as_str()).collect();
+        assert!(names.contains(&"foo"), "{names:?}");
+        assert!(names.contains(&"C"), "{names:?}");
+        assert!(names.contains(&"meth"), "{names:?}");
+        // Statement grain must not appear.
+        assert!(!parsed.blocks.iter().any(|b| b.kind == "expression_statement"));
+        assert!(!parsed.blocks.iter().any(|b| b.kind == "call"));
+        assert!(!parsed.blocks.iter().any(|b| b.kind == "assignment"));
+    }
+
+    #[test]
+    fn python_call_edges_without_statement_nodes() {
+        let src = r#"
+def bar():
+    pass
+
+def foo():
+    bar()
+"#;
+        let parsed = parse(PathBuf::from("calls.py"), src).expect("parse");
+        let tree = parsed.tree.as_ref().expect("tree");
+        let edges = crate::snooper::lang::python::edges::collect_call_edges(
+            &parsed.blocks,
+            &parsed.source,
+            tree,
+            None,
+        );
+        let foo = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "foo")
+            .expect("foo");
+        let bar = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "bar")
+            .expect("bar");
+        assert!(
+            edges.iter().any(|(f, t)| f == &foo.id && t == &bar.id),
+            "foo→bar CALL expected without statement warehouse nodes: {edges:?}"
+        );
+    }
 }
