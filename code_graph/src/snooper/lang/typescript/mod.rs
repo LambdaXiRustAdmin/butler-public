@@ -15,47 +15,13 @@ pub mod imports;
 pub mod names;
 pub mod parser;
 
-pub(crate) use edges::{build_usage_edges, collect_call_edges, collect_usage_edges};
+pub(crate) use edges::{collect_call_edges, collect_usage_edges};
 pub use imports::link_relative_imports;
 pub(crate) use names::prefer_ambiguous_typescript_names;
 pub use parser::parse;
 
 // Re-export ParseError for consistency
 pub use super::super::parser::ParseError;
-
-use crate::{BlockInfo, CodeGraph};
-use tree_sitter::Query;
-
-// 4-arg build_call_edges (HIT 9) -- shim killed from edges.rs.
-pub(crate) fn build_call_edges(
-    blocks: &[BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-) {
-    super::generic_edges::build_call_edges(
-        blocks,
-        source,
-        tree,
-        graph,
-        &[
-            "class_declaration",
-            "interface_declaration",
-            "function_declaration",
-            "method_definition",
-            "arrow_function",
-        ],
-        &[
-            "function_declaration",
-            "method_definition",
-            "arrow_function",
-        ],
-        || Query::new(&tree_sitter_typescript::LANGUAGE_TSX.into(), CALL_QUERY),
-        |b, _| (!b.name.is_empty()).then(|| b.name.clone()),
-        GENERIC_NAMES,
-        super::generic_edges::FallbackStyle::QueryOnly,
-    );
-}
 
 // Blacklist of common JS/TS globals, React hooks, and **HTML/SVG intrinsics**.
 // JSX `<main>` / `<div>` must not resolve to a global function named `main` (t3 Home bug).

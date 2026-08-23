@@ -53,7 +53,10 @@ pub(crate) fn collect_call_edges(
     let mut edges = Vec::new();
 
     let mut local_name_to_id: HashMap<String, Id> = HashMap::new();
-    for b in blocks.iter().filter(|b| CALLEE_KINDS.contains(&b.kind.as_str())) {
+    for b in blocks
+        .iter()
+        .filter(|b| CALLEE_KINDS.contains(&b.kind.as_str()))
+    {
         if !b.name.is_empty() {
             local_name_to_id
                 .entry(b.name.clone())
@@ -283,10 +286,7 @@ pub(crate) fn parse_go_imports(root: Node, source: &str) -> ImportTable {
                 a.to_string()
             } else {
                 // Default alias = last path segment
-                path.rsplit('/')
-                    .next()
-                    .unwrap_or(path.as_str())
-                    .to_string()
+                path.rsplit('/').next().unwrap_or(path.as_str()).to_string()
             };
             map.insert(alias, path);
             continue;
@@ -299,20 +299,7 @@ pub(crate) fn parse_go_imports(root: Node, source: &str) -> ImportTable {
     map
 }
 
-pub(crate) use super::super::generic_edges::{build_usage_edges, collect_usage_edges};
-
-/// 4-arg build into graph (legacy path without go_all multi-map).
-pub(crate) fn build_call_edges(
-    blocks: &[BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut crate::CodeGraph,
-) {
-    let edges = collect_call_edges(blocks, source, tree, None, None);
-    for (from, to) in edges {
-        graph.add_edge(from, to);
-    }
-}
+pub(crate) use super::super::generic_edges::collect_usage_edges;
 
 #[cfg(test)]
 mod tests {
@@ -341,38 +328,17 @@ func main() { a.Foo() }
         let a = parse_go("a/a.go", a_src);
         let b = parse_go("b/b.go", b_src);
         let main = parse_go("main.go", main_src);
-        let a_foo = a
-            .blocks
-            .iter()
-            .find(|x| x.name == "Foo")
-            .expect("a.Foo");
-        let b_foo = b
-            .blocks
-            .iter()
-            .find(|x| x.name == "Foo")
-            .expect("b.Foo");
+        let a_foo = a.blocks.iter().find(|x| x.name == "Foo").expect("a.Foo");
+        let b_foo = b.blocks.iter().find(|x| x.name == "Foo").expect("b.Foo");
         let mut go_all: HashMap<String, Vec<Id>> = HashMap::new();
-        go_all.insert(
-            "Foo".into(),
-            vec![a_foo.id.clone(), b_foo.id.clone()],
-        );
+        go_all.insert("Foo".into(), vec![a_foo.id.clone(), b_foo.id.clone()]);
         // Prefer wrong single-winner map (b) — package resolve must still pick a.
         let mut global = HashMap::new();
         global.insert("Foo".into(), b_foo.id.clone());
 
         let tree = main.tree.as_ref().unwrap();
-        let edges = collect_call_edges(
-            &main.blocks,
-            main_src,
-            tree,
-            Some(&global),
-            Some(&go_all),
-        );
-        let main_fn = main
-            .blocks
-            .iter()
-            .find(|x| x.name == "main")
-            .expect("main");
+        let edges = collect_call_edges(&main.blocks, main_src, tree, Some(&global), Some(&go_all));
+        let main_fn = main.blocks.iter().find(|x| x.name == "main").expect("main");
         assert!(
             edges
                 .iter()
@@ -402,13 +368,7 @@ func main() { b_v2.Foo() }
         let mut go_all = HashMap::new();
         go_all.insert("Foo".into(), vec![b_foo.id.clone()]);
         let tree = main.tree.as_ref().unwrap();
-        let edges = collect_call_edges(
-            &main.blocks,
-            main_src,
-            tree,
-            None,
-            Some(&go_all),
-        );
+        let edges = collect_call_edges(&main.blocks, main_src, tree, None, Some(&go_all));
         let main_fn = main.blocks.iter().find(|x| x.name == "main").unwrap();
         assert!(
             edges
@@ -487,13 +447,7 @@ func NewTestEngineWithOpts() {
         let mut global = HashMap::new();
         global.insert("Close".into(), ll_close.id.clone());
         let tree = main.tree.as_ref().unwrap();
-        let edges = collect_call_edges(
-            &main.blocks,
-            main_src,
-            tree,
-            Some(&global),
-            Some(&go_all),
-        );
+        let edges = collect_call_edges(&main.blocks, main_src, tree, Some(&global), Some(&go_all));
         assert!(
             edges
                 .iter()
@@ -566,7 +520,12 @@ import (
     #[test]
     fn gin_bind_calls_binding_default_not_gin_default() {
         use std::path::PathBuf;
-        let root = std::env::var_os("BUTLER_HOST_MOUNT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("projects")).join("test_repos/gin");
+        let root = std::env::var_os("BUTLER_HOST_MOUNT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("projects")
+            })
+            .join("test_repos/gin");
         if !root.join("context.go").is_file() {
             eprintln!("skip: gin not at expected path");
             return;
@@ -601,13 +560,7 @@ import (
         let mut global = HashMap::new();
         global.insert("Default".into(), gin_def.id.clone());
         let tree = ctx_p.tree.as_ref().unwrap();
-        let edges = collect_call_edges(
-            &ctx_p.blocks,
-            &ctx_src,
-            tree,
-            Some(&global),
-            Some(&go_all),
-        );
+        let edges = collect_call_edges(&ctx_p.blocks, &ctx_src, tree, Some(&global), Some(&go_all));
         let from_bind: Vec<_> = edges.iter().filter(|(f, _)| f == &bind_fn.id).collect();
         eprintln!("Bind edges: {from_bind:?}");
         eprintln!("gin.Default id={}", gin_def.id);
@@ -626,7 +579,12 @@ import (
     #[test]
     fn prometheus_tsdb_default_options_not_agent() {
         use std::path::PathBuf;
-        let root = std::env::var_os("BUTLER_HOST_MOUNT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("projects")).join("test_repos/prometheus");
+        let root = std::env::var_os("BUTLER_HOST_MOUNT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("projects")
+            })
+            .join("test_repos/prometheus");
         let tsdb_path = root.join("tsdb/db.go");
         let agent_path = root.join("tsdb/agent/db.go");
         let caller_path = root.join("util/teststorage/storage.go");

@@ -13,46 +13,15 @@ pub mod edges;
 pub mod ffi;
 pub mod parser;
 
-pub(crate) use edges::{build_usage_edges, collect_call_edges, collect_usage_edges};
-pub use parser::parse;
+pub(crate) use edges::{collect_call_edges, collect_usage_edges};
 pub use ffi::{collect_pyfunction_exports, parse_pyfunction_export_name};
+pub use parser::parse;
 
-use crate::{BlockInfo, CodeGraph};
 use std::collections::HashMap;
 use std::path::Path;
-use tree_sitter::Query;
 
 // Re-export ParseError for consistency (was in original)
 pub use super::super::parser::ParseError; // or from lang mod, but direct for now
-
-// 4-arg build_call_edges (HIT 9) -- the shim was killed from edges.rs; this forwarder lives
-// in the module that owns the lang consts (CALL_QUERY, GENERIC_NAMES) and can access parser::extract.
-pub(crate) fn build_call_edges(
-    blocks: &[BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-) {
-    super::generic_edges::build_call_edges(
-        blocks,
-        source,
-        tree,
-        graph,
-        &["function_item", "impl_item", "trait_item"],
-        &["function_item"],
-        || Query::new(&tree_sitter_rust::LANGUAGE.into(), CALL_QUERY),
-        |b, src| {
-            if !b.name.is_empty() {
-                Some(b.name.clone())
-            } else {
-                parser::extract_name_from_block(b, src)
-            }
-        },
-        GENERIC_NAMES,
-        // QueryOnly — see edges.rs: body-scan false positives on comments/tests.
-        super::generic_edges::FallbackStyle::QueryOnly,
-    );
-}
 
 // Blacklist of extremely common Rust names (methods, fns, traits) that would
 // cause thousands of false-positive cross-crate edges (and pollute the graph)
@@ -85,6 +54,12 @@ const CALL_QUERY: &str = "
 (call_expression
  function: (field_expression
   field: (field_identifier) @call.name
+ )
+) @call
+
+(call_expression
+ function: (scoped_identifier
+  name: (identifier) @call.name
  )
 ) @call
 ";

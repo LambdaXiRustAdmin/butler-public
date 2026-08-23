@@ -5,7 +5,7 @@
 //
 // Config: caller_kinds (where call sites live) vs callee_kinds (valid CALL targets).
 
-use crate::{BlockInfo, CodeGraph, Id};
+use crate::{BlockInfo, Id};
 use std::collections::HashMap;
 use tree_sitter::{Query, QueryCursor, StreamingIterator};
 
@@ -19,36 +19,6 @@ pub(crate) enum FallbackStyle {
     /// TS/JS: **no** body-scan fallback — only Tree-sitter call_expression captures.
     /// Aggressive fallback was name-soup on templates (t3 `Home` → CLI helpers).
     QueryOnly,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_call_edges(
-    blocks: &[BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-    caller_kinds: &[&str],
-    callee_kinds: &[&str],
-    make_query: impl FnOnce() -> Result<Query, tree_sitter::QueryError>,
-    get_name: impl Fn(&BlockInfo, &str) -> Option<String>,
-    generic_names: &[&str],
-    fallback: FallbackStyle,
-) {
-    let edges = collect_call_edges(
-        blocks,
-        source,
-        tree,
-        None,
-        caller_kinds,
-        callee_kinds,
-        make_query,
-        get_name,
-        generic_names,
-        fallback,
-    );
-    for (from, to) in edges {
-        graph.add_edge(from, to);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -70,7 +40,10 @@ pub(crate) fn collect_call_edges(
     // Same name: prefer function_definition over function_declaration.
     let mut local_name_to_id: HashMap<String, Id> = HashMap::new();
     let mut local_score: HashMap<String, i32> = HashMap::new();
-    for b in blocks.iter().filter(|b| callee_kinds.contains(&b.kind.as_str())) {
+    for b in blocks
+        .iter()
+        .filter(|b| callee_kinds.contains(&b.kind.as_str()))
+    {
         let Some(n) = get_name(b, source) else {
             continue;
         };
@@ -292,8 +265,7 @@ fn should_skip_fallback(name: &str, style: FallbackStyle) -> bool {
         FallbackStyle::QueryOnly => true, // unused — fallback loop skipped
         FallbackStyle::GoIdiomatic => name.len() <= 2,
         FallbackStyle::Aggressive => {
-            name.len() <= 3
-                || (name.chars().all(|c| c.is_ascii_lowercase()) && !name.contains('_'))
+            name.len() <= 3 || (name.chars().all(|c| c.is_ascii_lowercase()) && !name.contains('_'))
         }
     }
 }
@@ -304,9 +276,15 @@ mod fallback_tests {
 
     #[test]
     fn go_fallback_keeps_idiomatic_lowercase() {
-        assert!(!should_skip_fallback("reloader", FallbackStyle::GoIdiomatic));
+        assert!(!should_skip_fallback(
+            "reloader",
+            FallbackStyle::GoIdiomatic
+        ));
         assert!(!should_skip_fallback("reload", FallbackStyle::GoIdiomatic));
-        assert!(!should_skip_fallback("newScrapePool", FallbackStyle::GoIdiomatic));
+        assert!(!should_skip_fallback(
+            "newScrapePool",
+            FallbackStyle::GoIdiomatic
+        ));
         assert!(should_skip_fallback("x", FallbackStyle::GoIdiomatic));
     }
 
@@ -314,8 +292,14 @@ mod fallback_tests {
     fn aggressive_fallback_still_drops_pure_lower_temps() {
         assert!(should_skip_fallback("reloader", FallbackStyle::Aggressive));
         assert!(should_skip_fallback("foo", FallbackStyle::Aggressive));
-        assert!(!should_skip_fallback("server_start", FallbackStyle::Aggressive));
-        assert!(!should_skip_fallback("newScrapePool", FallbackStyle::Aggressive));
+        assert!(!should_skip_fallback(
+            "server_start",
+            FallbackStyle::Aggressive
+        ));
+        assert!(!should_skip_fallback(
+            "newScrapePool",
+            FallbackStyle::Aggressive
+        ));
     }
 
     #[test]
@@ -324,18 +308,6 @@ mod fallback_tests {
         assert!(should_skip_fallback("u_int", FallbackStyle::GoIdiomatic));
         assert!(should_skip_fallback("GLFWwindow", FallbackStyle::GoIdiomatic) == false);
         // GLFWwindow is not in TYPEISH — kind filter must drop it as struct
-    }
-}
-
-pub(crate) fn build_usage_edges(
-    blocks: &[BlockInfo],
-    _source: &str,
-    _tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-) {
-    let edges = collect_usage_edges(blocks, _source, _tree);
-    for (from, to) in edges {
-        graph.add_edge(from, to);
     }
 }
 

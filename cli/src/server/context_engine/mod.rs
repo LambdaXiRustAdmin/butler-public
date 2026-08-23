@@ -35,10 +35,7 @@ use resolve::{try_project_gate, ProjectGateOutcome, ProjectGateReady};
 use serve_prep::{try_serve_prep, ServePrepOutcome};
 use surgical_phase::{run_surgical_phase, SurgicalPhaseOutcome};
 
-pub use graph_admit::{
-    collect_warm_roots, sleep_warehouse, warehouse_idle_reaper_tick, warehouse_sleep_tick,
-    warm_project_root,
-};
+pub use graph_admit::{collect_warm_roots, warehouse_idle_reaper_tick, warm_project_root};
 
 use axum::{http::StatusCode, Json};
 use std::time::Instant;

@@ -42,7 +42,7 @@ pub(crate) fn collect_call_edges(
     )
 }
 
-pub(crate) use super::super::generic_edges::{build_usage_edges, collect_usage_edges};
+pub(crate) use super::super::generic_edges::collect_usage_edges;
 
 #[cfg(test)]
 mod call_edge_tests {
@@ -111,9 +111,7 @@ fn dispatch_tool() {
             .find(|b| b.name == "dispatch_tool")
             .expect("caller");
         assert!(
-            edges
-                .iter()
-                .any(|(f, t)| f == &from.id && t == &target.id),
+            edges.iter().any(|(f, t)| f == &from.id && t == &target.id),
             "dispatch_tool must CALL handle_orchestrate via global map; edges={edges:?}"
         );
     }
@@ -150,9 +148,7 @@ fn dispatch_tool() {
             .find(|b| b.name == "dispatch_tool")
             .expect("caller");
         assert!(
-            edges
-                .iter()
-                .any(|(f, t)| f == &from.id && t == &target.id),
+            edges.iter().any(|(f, t)| f == &from.id && t == &target.id),
             "multiline call must CALL handle_orchestrate; edges={edges:?}"
         );
     }
@@ -191,8 +187,8 @@ fn arch_compact_map_lists_skeleton_hubs_and_next() {
 
     #[test]
     fn parse_spine_file_indexes_function_item_not_only_call() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../cli/src/server/orchestrate/spine.rs");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/src/server/orchestrate/spine.rs");
         let src = std::fs::read_to_string(&path).expect("read spine.rs");
         let parsed = parse_file(&path, &src).expect("parse spine");
         let fns: Vec<(String, usize)> = parsed
@@ -230,7 +226,87 @@ pub fn other() {}
             names.contains(&"reverse_call_spine"),
             "pub(crate) fn must name reverse_call_spine not crate; names={names:?}"
         );
-        assert!(!names.contains(&"crate"), "must not name fn crate; names={names:?}");
+        assert!(
+            !names.contains(&"crate"),
+            "must not name fn crate; names={names:?}"
+        );
+    }
+
+    /// Live hole: `IdleConstructLook::from_posture_menus(...)` is scoped_identifier,
+    /// not identifier / field_expression. Reverse CALL was empty with real sites.
+    #[test]
+    fn rust_type_colon_method_same_file_is_call() {
+        let src = r#"
+struct IdleConstructLook;
+impl IdleConstructLook {
+    pub fn from_posture_menus() {}
+}
+fn with_posture() {
+    IdleConstructLook::from_posture_menus();
+}
+"#;
+        let parsed = parse_file(Path::new("residual_look.rs"), src).expect("parse");
+        let tree = parsed.tree.as_ref().expect("tree");
+        let edges = collect_call_edges(&parsed.blocks, src, tree, None);
+        let caller = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "with_posture" && b.kind == "function_item")
+            .expect("caller");
+        let target = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "from_posture_menus" && b.kind == "function_item")
+            .expect("associated fn");
+        assert!(
+            edges
+                .iter()
+                .any(|(f, t)| f == &caller.id && t == &target.id),
+            "Type::method must CALL from_posture_menus; names={:?} edges={edges:?}",
+            parsed
+                .blocks
+                .iter()
+                .map(|b| (b.kind.as_str(), b.name.as_str()))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn rust_type_colon_method_resolves_via_global_map() {
+        let callee_src = r#"
+impl IdleConstructLook {
+    pub fn from_posture_menus() {}
+}
+"#;
+        let caller_src = r#"
+fn with_posture() {
+    IdleConstructLook::from_posture_menus();
+}
+fn rebuild_fragments() {
+    IdleConstructLook::from_posture_menus();
+}
+"#;
+        let callee = parse_file(Path::new("fragment_menu.rs"), callee_src).expect("parse callee");
+        let caller = parse_file(Path::new("residual_look.rs"), caller_src).expect("parse caller");
+        let target = callee
+            .blocks
+            .iter()
+            .find(|b| b.name == "from_posture_menus" && b.kind == "function_item")
+            .expect("def");
+        let mut global = HashMap::new();
+        global.insert("from_posture_menus".into(), target.id.clone());
+        let tree = caller.tree.as_ref().expect("tree");
+        let edges = collect_call_edges(&caller.blocks, caller_src, tree, Some(&global));
+        for name in ["with_posture", "rebuild_fragments"] {
+            let from = caller
+                .blocks
+                .iter()
+                .find(|b| b.name == name && b.kind == "function_item")
+                .unwrap_or_else(|| panic!("caller {name}"));
+            assert!(
+                edges.iter().any(|(f, t)| f == &from.id && t == &target.id),
+                "{name} must CALL Type::from_posture_menus via global; edges={edges:?}"
+            );
+        }
     }
 }
-

@@ -28,7 +28,7 @@ pub(crate) fn collect_call_edges(
     )
 }
 
-pub(crate) use super::super::generic_edges::{build_usage_edges, collect_usage_edges};
+pub(crate) use super::super::generic_edges::collect_usage_edges;
 
 #[cfg(test)]
 mod tests {
@@ -59,7 +59,10 @@ int helper(void) { return sqlite3_open(1); }
         while let Some(m) = matches.next() {
             caps += m.captures.len();
         }
-        assert!(caps >= 2, "C query must capture calls on C tree; got {caps}");
+        assert!(
+            caps >= 2,
+            "C query must capture calls on C tree; got {caps}"
+        );
 
         let def = |name: &str| {
             parsed
@@ -121,7 +124,9 @@ GLFWwindow *glfwCreateWindow(int w, int h, GLFWmonitor *mon) {
             })
             .collect();
         assert!(
-            !names.iter().any(|(_, t)| t == "GLFWwindow" || t == "GLFWmonitor"),
+            !names
+                .iter()
+                .any(|(_, t)| t == "GLFWwindow" || t == "GLFWmonitor"),
             "types must not be callees: {names:?}"
         );
         assert!(

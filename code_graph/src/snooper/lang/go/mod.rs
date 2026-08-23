@@ -4,7 +4,7 @@
 pub mod edges;
 pub mod parser;
 
-pub(crate) use edges::{build_call_edges, build_usage_edges, collect_call_edges, collect_usage_edges};
+pub(crate) use edges::{collect_call_edges, collect_usage_edges};
 pub use parser::parse;
 
 // Re-export ParseError for consistency

@@ -44,7 +44,7 @@ pub(crate) fn collect_call_edges(
     )
 }
 
-pub(crate) use super::super::generic_edges::{build_usage_edges, collect_usage_edges};
+pub(crate) use super::super::generic_edges::collect_usage_edges;
 
 #[cfg(test)]
 mod tests {
@@ -162,4 +162,3 @@ export default function Home() {
         );
     }
 }
-

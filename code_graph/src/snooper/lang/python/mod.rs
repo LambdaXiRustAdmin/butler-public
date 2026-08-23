@@ -17,27 +17,13 @@ pub mod imports;
 pub mod names;
 pub mod parser;
 
-pub(crate) use edges::{build_usage_edges, collect_call_edges, collect_usage_edges};
+pub(crate) use edges::{collect_call_edges, collect_usage_edges};
+pub use ffi::link_to_ffi_exports;
 pub(crate) use names::prefer_ambiguous_python_names;
 pub use parser::parse;
-pub use ffi::link_to_ffi_exports;
 
 // Re-export ParseError for consistency (was in original)
 pub use super::super::parser::ParseError;
-
-use crate::CodeGraph;
-
-// 4-arg build_call_edges — routes through import-bound collect (not generic bare-name).
-pub(crate) fn build_call_edges(
-    blocks: &[crate::BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-) {
-    for (from, to) in edges::collect_call_edges(blocks, source, tree, None) {
-        graph.add_edge(from, to);
-    }
-}
 
 // Blacklist of extremely common Python builtin / dunder / container names.
 // Prevents polluting the graph with thousands of false-positive cross-file edges

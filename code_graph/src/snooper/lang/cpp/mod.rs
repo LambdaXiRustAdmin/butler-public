@@ -4,13 +4,10 @@
 pub mod edges;
 pub mod parser;
 
-pub(crate) use edges::{build_usage_edges, collect_call_edges, collect_usage_edges};
+pub(crate) use edges::{collect_call_edges, collect_usage_edges};
 pub use parser::parse;
 
 pub use super::super::parser::ParseError;
-
-use crate::{BlockInfo, CodeGraph};
-use tree_sitter::Query;
 
 /// C++ call query — must use `tree_sitter_cpp` language object.
 pub(crate) const CALL_QUERY: &str = r#"
@@ -89,23 +86,3 @@ pub(crate) const GENERIC_NAMES: &[&str] = &[
     "internal",
     "using",
 ];
-
-pub(crate) fn build_call_edges(
-    blocks: &[BlockInfo],
-    source: &str,
-    tree: &tree_sitter::Tree,
-    graph: &mut CodeGraph,
-) {
-    super::generic_edges::build_call_edges(
-        blocks,
-        source,
-        tree,
-        graph,
-        &["function_definition"],
-        &["function_definition", "function_declaration"],
-        || Query::new(&tree_sitter_cpp::LANGUAGE.into(), CALL_QUERY),
-        |b, _| (!b.name.is_empty()).then(|| b.name.clone()),
-        GENERIC_NAMES,
-        super::generic_edges::FallbackStyle::Aggressive,
-    );
-}

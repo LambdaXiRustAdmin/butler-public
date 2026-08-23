@@ -33,7 +33,10 @@ pub(crate) fn collect_call_edges(
 
     let mut local_name_to_id: HashMap<String, Id> = HashMap::new();
     let mut local_score: HashMap<String, i32> = HashMap::new();
-    for b in blocks.iter().filter(|b| CALLEE_KINDS.contains(&b.kind.as_str())) {
+    for b in blocks
+        .iter()
+        .filter(|b| CALLEE_KINDS.contains(&b.kind.as_str()))
+    {
         if b.name.is_empty() {
             continue;
         }
@@ -279,7 +282,7 @@ fn should_skip_fallback(name: &str) -> bool {
     name.len() <= 3 || (name.chars().all(|c| c.is_ascii_lowercase()) && !name.contains('_'))
 }
 
-pub(crate) use super::super::generic_edges::{build_usage_edges, collect_usage_edges};
+pub(crate) use super::super::generic_edges::collect_usage_edges;
 
 #[cfg(test)]
 mod tests {
@@ -341,12 +344,16 @@ def run():
             .expect("run block");
 
         assert!(
-            edges.iter().any(|(from, to)| from == &run_id && to == &clean_id),
+            edges
+                .iter()
+                .any(|(from, to)| from == &run_id && to == &clean_id),
             "import-bound utils.clean() must link to clean_id; edges={:?}",
             edge_names(&edges, blocks)
         );
         assert!(
-            edges.iter().any(|(from, to)| from == &run_id && to == &create_id),
+            edges
+                .iter()
+                .any(|(from, to)| from == &run_id && to == &create_id),
             "from-import alias mk() must link to create_id; edges={:?}",
             edge_names(&edges, blocks)
         );

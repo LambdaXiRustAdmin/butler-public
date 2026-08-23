@@ -57,22 +57,3 @@ pub(crate) fn collect_c_family_edges(
         }
     }
 }
-
-pub(crate) fn build_c_family_edges(
-    path: &Path,
-    source: &str,
-    blocks: &[BlockInfo],
-    tree: &tree_sitter::Tree,
-    graph: &mut crate::CodeGraph,
-) {
-    match c_family::dialect_for_file(path, source) {
-        c_family::CFamilyDialect::C => {
-            c::build_call_edges(blocks, source, tree, graph);
-            c::build_usage_edges(blocks, source, tree, graph);
-        }
-        c_family::CFamilyDialect::Cpp => {
-            cpp::build_call_edges(blocks, source, tree, graph);
-            cpp::build_usage_edges(blocks, source, tree, graph);
-        }
-    }
-}
