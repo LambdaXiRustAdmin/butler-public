@@ -14,38 +14,38 @@ pub(crate) fn next_action_symbol_miss(
 ) -> String {
     if !edges_complete {
         return format!(
-            "retry same butler_ask/Trace when edges climb (now {}%); do not conclude missing; do not switch to grep",
+            "retry same who_calls/Trace when edges climb (now {}%); do not conclude missing; do not switch to grep",
             percent.min(99)
         );
     }
     if is_homonym_risk_name(symbol) {
         return format!(
-            "call butler_ask again with scope_paths pinned to a dir/file that owns '{symbol}' (short names collide), or a longer path-qualified name — not grep"
+            "call who_calls again with scope_paths pinned to a dir/file that owns '{symbol}' (short names collide), or a longer path-qualified name — not grep"
         );
     }
-    "call butler_ask again with wider/changed scope_paths or mode=arch to orient; verify spelling — do not abandon for grep"
+    "call who_calls again with wider/changed scope_paths or mode=arch to orient; verify spelling — do not abandon for grep"
         .into()
 }
 
 pub(crate) fn next_action_missing_target_symbol() -> String {
-    "call butler_ask with symbol/target_symbol set to an exact identifier (function/type name); avoid prose"
+    "call who_calls with symbol/target_symbol set to an exact identifier (function/type name); avoid prose"
         .into()
 }
 
 pub(crate) fn next_action_building(percent: usize, soft_wall: bool) -> String {
     if soft_wall {
-        "set confirm_long_wait=true and retry same butler_ask, or abort and re-open with tighter scope_paths"
+        "set confirm_long_wait=true and retry same who_calls, or abort and re-open with tighter scope_paths"
             .into()
     } else {
         format!(
-            "retry same butler_ask (progress {}%); use toc as scope_paths when present — usable partial, not a hang",
+            "retry same who_calls (progress {}%); use toc as scope_paths when present — usable partial, not a hang",
             percent.min(99)
         )
     }
 }
 
 pub(crate) fn next_action_disambiguate() -> String {
-    "call butler_ask again with scope_paths set to exactly ONE path from locations/suggested_scopes above, then re-Trace — do not proceed without pinning"
+    "call who_calls again with scope_paths set to exactly ONE path from locations/suggested_scopes above, then re-Trace — do not proceed without pinning"
         .into()
 }
 

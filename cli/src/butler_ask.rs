@@ -103,24 +103,18 @@ pub fn remap_butler_ask_args(mut arguments: Value) -> Value {
         obj.insert("detail".to_string(), json!("compact"));
     }
 
-    obj.insert(
-        "mcp_tool_name".to_string(),
-        json!("butler_orchestrate"),
-    );
+    obj.insert("mcp_tool_name".to_string(), json!("butler_orchestrate"));
     arguments
 }
 
 /// Product MCP toolbelt: primary façade first (stable — no mid-session explosion).
 ///
-/// Default (expert=false): `butler_ask`, `butler_orchestrate`, `butler_help`.
+/// Default (expert=false): `who_calls`, `butler_ask` (alias), `butler_orchestrate`, `butler_help`.
 /// Expert: legacy search/inspect/map/context + project helpers + harvest schemas.
-pub fn product_mcp_tools_json(
-    expert: bool,
-    harvest: Vec<Value>,
-) -> Vec<Value> {
+pub fn product_mcp_tools_json(expert: bool, harvest: Vec<Value>) -> Vec<Value> {
     use crate::butler_instructions::{
-        BUTLER_ASK_TOOL_DESCRIPTION, BUTLER_HELP_TOOL_DESCRIPTION,
-        BUTLER_ORCHESTRATE_TOOL_DESCRIPTION,
+        BUTLER_ASK_ALIAS_DESCRIPTION, BUTLER_HELP_TOOL_DESCRIPTION,
+        BUTLER_ORCHESTRATE_TOOL_DESCRIPTION, WHO_CALLS_TOOL_DESCRIPTION,
     };
     use crate::mcp_schema::{
         butler_ask_tool_schema, butler_context_tool_schema, butler_inspect_tool_schema,
@@ -129,8 +123,13 @@ pub fn product_mcp_tools_json(
 
     let mut tools = vec![
         json!({
+            "name": "who_calls",
+            "description": WHO_CALLS_TOOL_DESCRIPTION,
+            "inputSchema": butler_ask_tool_schema()
+        }),
+        json!({
             "name": "butler_ask",
-            "description": BUTLER_ASK_TOOL_DESCRIPTION,
+            "description": BUTLER_ASK_ALIAS_DESCRIPTION,
             "inputSchema": butler_ask_tool_schema()
         }),
         json!({
@@ -148,22 +147,22 @@ pub fn product_mcp_tools_json(
         tools.extend([
             json!({
                 "name": "butler_context",
-                "description": "Legacy general-purpose context. Prefer `butler_ask`.",
+                "description": "Legacy general-purpose context. Prefer `who_calls`.",
                 "inputSchema": butler_context_tool_schema()
             }),
             json!({
                 "name": "butler_search",
-                "description": "Symbol/keyword search. Prefer `butler_ask` with symbol=… for Trace.",
+                "description": "Symbol/keyword search. Prefer `who_calls` with symbol=… for who-calls.",
                 "inputSchema": butler_search_tool_schema()
             }),
             json!({
                 "name": "butler_inspect",
-                "description": "Surgical file/line inspect. Prefer `butler_ask` with target_file+target_line.",
+                "description": "Surgical file/line inspect. Prefer `who_calls` with target_file+target_line.",
                 "inputSchema": butler_inspect_tool_schema()
             }),
             json!({
                 "name": "butler_map",
-                "description": "Scoped structural map. Prefer `butler_ask` mode=arch + scope_paths.",
+                "description": "Scoped structural map. Prefer `who_calls` mode=arch + scope_paths.",
                 "inputSchema": butler_map_tool_schema()
             }),
             json!({
@@ -193,7 +192,15 @@ mod tests {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
-        assert_eq!(names, vec!["butler_ask", "butler_orchestrate", "butler_help"]);
+        assert_eq!(
+            names,
+            vec![
+                "who_calls",
+                "butler_ask",
+                "butler_orchestrate",
+                "butler_help"
+            ]
+        );
     }
 
     #[test]
@@ -203,7 +210,8 @@ mod tests {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
-        assert_eq!(names[0], "butler_ask");
+        assert_eq!(names[0], "who_calls");
+        assert!(names.contains(&"butler_ask"));
         assert!(names.contains(&"butler_search"));
         assert!(names.contains(&"harvest_open"));
     }

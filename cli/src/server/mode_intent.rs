@@ -172,7 +172,7 @@ pub fn compute_effective_mode(req: &ContextRequest, force_surgical: bool) -> Con
 pub fn wants_orchestrate_path(req: &ContextRequest) -> bool {
     if matches!(
         req.mcp_tool_name.as_deref(),
-        Some("butler_orchestrate") | Some("butler_ask")
+        Some("butler_orchestrate") | Some("butler_ask") | Some("who_calls")
     ) {
         return true;
     }

@@ -42,7 +42,7 @@ pub async fn mcp_manifest(butler_url: String) -> impl IntoResponse {
         tools: vec![
             McpTool {
                 name: "butler_context".to_string(),
-                description: "Use this tool to get relevant code context. 'project' parameter is MANDATORY for LLM usage. You must always include it. If you don't know which project to use, call 'butler_select_project' first. There is no fallback — missing 'project' will return an error.".to_string(),
+                description: "Structural code context (Trace). project: absolute path preferred; if omitted, last successful project is used. Server auto-starts on localhost when down. Prefer who_calls when available.".to_string(),
                 input_schema: butler_context_tool_schema(),
             },
             McpTool {

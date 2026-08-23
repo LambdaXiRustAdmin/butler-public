@@ -371,7 +371,10 @@ pub(super) fn apply_monorepo_auto_scope(
 /// select_blocks-only.
 /// Apply `butler_ask` façade routing on a deserialized HTTP request.
 pub(super) fn normalize_butler_ask_request(req: &mut ContextRequest) {
-    if req.mcp_tool_name.as_deref() != Some("butler_ask") {
+    if !matches!(
+        req.mcp_tool_name.as_deref(),
+        Some("butler_ask") | Some("who_calls")
+    ) {
         return;
     }
     // query → symbol or prompt

@@ -21,7 +21,7 @@ use cli::butler_ask::product_mcp_tools_json;
 
 /// Handles `GET /mcp/manifest` — returns the MCP tool manifest (thin wrapper).
 ///
-/// Stable product belt: **butler_ask** first, then orchestrate + help.
+/// Stable product belt: **who_calls** first, then butler_ask alias + orchestrate + help.
 /// Expert suite only when `agent.expert_mode` (not mid-session unlock).
 pub async fn mcp_manifest(State(state): State<AppState>) -> impl IntoResponse {
     let expert = state.settings.agent.expert_mode;
@@ -44,7 +44,7 @@ pub async fn mcp_manifest(State(state): State<AppState>) -> impl IntoResponse {
 
     let manifest = McpManifest {
         name: "butler".to_string(),
-        description: "Butler — structural CodeGraph for agents. PRIMARY tool: butler_ask."
+        description: "Butler — who_calls first (direct callers/callees). Internal: butler_ask."
             .to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         base_url: "/".to_string(),

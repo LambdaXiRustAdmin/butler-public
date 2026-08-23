@@ -1,6 +1,6 @@
 # Butler Alpha — setup one-pager
 
-**Not a RAG.** Butler hands agents a **code map** (callers, callees, reverse spine, dual-stack bridges), not a file dump.
+**Not a RAG.** Butler hands agents a **code map** (direct callers/callees; hop-2 is not a caller), not a file dump. Door: **`who_calls`**.
 
 **Names:** product / process / tools = **Butler**. Optional external brand experiments are parked for later.
 
@@ -98,6 +98,11 @@ butler warm -r /home/you/projects/my-app
 butler warm -r /a -r /b --full --server http://127.0.0.1:8002
 # or boot: export BUTLER_WARM_ROOTS=/a:/b
 # or config: server.warm_roots = ["/a", "/b"]
+
+# Actively working this repo — pin watcher (not a boot fleet):
+butler hold -r /home/you/projects/my-app --server http://127.0.0.1:8002
+butler hold --list
+# butler hold --release -r /home/you/projects/my-app
 ```
 
 Caches live under each project’s **`.butler/`** (graph shards, memo). Do not treat `.butler` as source.

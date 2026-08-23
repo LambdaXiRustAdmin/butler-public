@@ -5,7 +5,7 @@
 //! **M1 peel:** product tools/list + tools/call → [`dispatch`].
 //! **M2 peel:** expert harvest tools → [`harvest_dispatch`] (not default product belt).
 //!
-//! Stranger / Alpha: `butler_ask` only. Harvest requires expert_mode at process start.
+//! Stranger / Alpha: `who_calls` (internal `butler_ask`) only. Harvest requires expert_mode at process start.
 
 pub mod handlers;
 pub mod protocol;

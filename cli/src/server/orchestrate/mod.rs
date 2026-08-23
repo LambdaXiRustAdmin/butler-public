@@ -43,7 +43,7 @@ pub(crate) use helpers::{
     bridge_infos, call_side_bit, cluster_infos_from_scoped, collect_seed_bridge_neighbors,
     edge_census_from_report, format_loc_lang, format_loc_lang_hop, hop_split,
     hub_cap_for_summary, lang_cluster_of, normalize_goal, scope_frame_line,
-    scope_frame_line_with_peers,
+    scope_frame_line_with_peers, EdgeCensus,
 };
 
 // O2: Early Exit entry (public surface unchanged).

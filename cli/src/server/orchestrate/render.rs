@@ -6,7 +6,7 @@ use super::receipt::{
 use super::{
     call_side_bit, edge_census_from_report, empty_callers_line, format_loc_lang,
     format_loc_lang_hop, hop_split, report_incomplete, scope_frame_line, short_path,
-    truncate_def,
+    truncate_def, EdgeCensus,
 };
 use crate::server::build_status;
 use crate::server::dto::*;
@@ -68,6 +68,24 @@ pub(super) fn short_display_path(file: &str) -> String {
     }
 }
 
+/// User-visible first line: pain language + DIRECT N. Hop-2 is not a caller.
+fn pain_direct_lead(name: &str, cen: &EdgeCensus) -> String {
+    let callers = if cen.callers_direct + cen.callers_transitive == 0 {
+        cen.callers_total
+    } else {
+        cen.callers_direct
+    };
+    let callees = if cen.callees_direct + cen.callees_transitive == 0 {
+        cen.callees_total
+    } else {
+        cen.callees_direct
+    };
+    format!(
+        "Before you edit {name}: here are the direct callers / callees. {} total. Hop-2 is not a caller.\n",
+        callers + callees
+    )
+}
+
 /// Headline one-liner (always used for Compact; also first line of Dense).
 /// Includes preferred seed path + alt location count so agents can re-pin mega-homonyms.
 pub(super) fn compact_headline(st: &StructuredReport) -> String {
@@ -104,7 +122,7 @@ pub(super) fn compact_headline(st: &StructuredReport) -> String {
             .next_action
             .as_deref()
             .filter(|n| !n.is_empty())
-            .unwrap_or("call butler_ask again with scope_paths set to exactly ONE path from locations, then re-Trace");
+            .unwrap_or("call who_calls again with scope_paths set to exactly ONE path from locations, then re-Trace");
         return format!(
             "Disambiguate '{name}': {n} serious production locations — pin scope_paths (see locations) before Trace neighborhood.{receipt_bit}\nnext: {next}"
         );
@@ -118,7 +136,7 @@ pub(super) fn compact_headline(st: &StructuredReport) -> String {
             return format!("Orchestrate error: {err}\nnext: {next}");
         }
         return format!(
-            "Orchestrate error: {err}\nnext: call butler_ask with a recognized goal/symbol or mode=arch to orient"
+            "Orchestrate error: {err}\nnext: call who_calls with a recognized goal/symbol or mode=arch to orient"
         );
     }
     if let Some(t) = st.target.as_ref() {
@@ -214,6 +232,7 @@ pub(super) fn compact_headline(st: &StructuredReport) -> String {
             format!(" {frame}")
         };
         let receipt_bit = receipt_compact_bit(st);
+        let pain = pain_direct_lead(&t.name, &cen);
         // · separates seed locus from census (colon after path is only for line).
         if report_incomplete(st) {
             let pct = st.state.percent.unwrap_or(0).min(99);
@@ -225,13 +244,13 @@ pub(super) fn compact_headline(st: &StructuredReport) -> String {
             };
             let tag = build_status::honest_partial_tag(pct, conf);
             return format!(
-                "Trace for {} ★ {seed} · {callers_bit} so far, {callees_bit} so far{bridge_bit} ({} blocks){alt_bit}.{domain_bit}{scope_bit}{receipt_bit} {tag}",
+                "{pain}Trace for {} ★ {seed} · {callers_bit} so far, {callees_bit} so far{bridge_bit} ({} blocks){alt_bit}.{domain_bit}{scope_bit}{receipt_bit} {tag}",
                 t.name,
                 blocks,
             );
         }
         return format!(
-            "Trace for {} ★ {seed} · {callers_bit}, {callees_bit}{bridge_bit} ({} highly relevant blocks){alt_bit}.{domain_bit}{scope_bit}{receipt_bit}",
+            "{pain}Trace for {} ★ {seed} · {callers_bit}, {callees_bit}{bridge_bit} ({} highly relevant blocks){alt_bit}.{domain_bit}{scope_bit}{receipt_bit}",
             t.name,
             blocks
         );

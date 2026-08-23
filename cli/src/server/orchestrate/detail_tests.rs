@@ -94,10 +94,15 @@ fn empty_callers_line_zero_call_not_dead_code() {
     st.state.percent = Some(100);
     let empty = empty_callers_line(st.target.as_ref().unwrap(), &st);
     assert!(
-        empty.contains("not proof of dead code") || empty.contains("not dead code"),
+        empty.contains("not unused")
+            || empty.contains("not proof of dead code")
+            || empty.contains("not dead code"),
         "{empty}"
     );
-    assert!(empty.contains("CALL") || empty.contains("callback"), "{empty}");
+    assert!(
+        empty.contains("CALL") || empty.contains("callback") || empty.contains("direct_callers"),
+        "{empty}"
+    );
 }
 
 #[test]
@@ -1092,15 +1097,19 @@ fn compact_headline_splits_direct_vs_hop2_callees() {
         h.contains("1 direct+2 hop≥2 CALL callees"),
         "headline must not claim 3 direct callees: {h}"
     );
-    let dense =
-        orchestrate_content_summary(Some(&st), None, ContentDetail::Dense);
     assert!(
-        dense.contains("hop>1 is not a direct call"),
-        "dense header must warn: {dense}"
+        h.contains("Before you edit") && h.contains("Hop-2 is not a caller"),
+        "pain lead must name hop-2 as not a caller: {h}"
+    );
+    let dense = orchestrate_content_summary(Some(&st), None, ContentDetail::Dense);
+    assert!(
+        dense.contains("Hop-2 is not a caller") || dense.contains("hop>1 is not a direct call"),
+        "dense header must warn hop-2 is not a caller: {dense}"
     );
     assert!(
-        dense.contains("transitive_fn") && dense.contains("hop=2"),
-        "L2 rows must show hop=2: {dense}"
+        dense.contains("transitive_fn")
+            && (dense.contains("hop=2") || dense.contains("hop≥2") || dense.contains("Hop-2")),
+        "L2 must be labeled as hop-2 (census or row), not as extra directs: {dense}"
     );
     assert!(
         !dense.contains("direct_fn") || !dense.lines().any(|l| l.contains("direct_fn") && l.contains("hop=")),

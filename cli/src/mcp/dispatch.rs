@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::butler_ask::{product_mcp_tools_json, remap_butler_ask_args};
-use crate::butler_instructions::BUTLER_ORCHESTRATE_INSTRUCTIONS;
 use super::handlers::handle_butler_context;
 use super::harvest_dispatch::{
     dispatch_harvest_tool_call, harvest_schemas_if_expert, is_harvest_tool,
 };
+use crate::butler_ask::{product_mcp_tools_json, remap_butler_ask_args};
+use crate::butler_instructions::BUTLER_ORCHESTRATE_INSTRUCTIONS;
 
 /// Build the tools list for stdio "tools/list".
 /// Stable product belt by default; expert_mode unlocks legacy + harvest schemas.
@@ -41,8 +41,8 @@ pub(crate) async fn dispatch_tool_call(
     }
 
     let result = match name {
-        "butler_ask" => {
-            // Façade: simple symbol Trace by default — no goal enum required.
+        "who_calls" | "butler_ask" => {
+            // User-facing door is who_calls; butler_ask is the internal alias.
             let args = remap_butler_ask_args(arguments);
             handle_butler_context(args, butler_url).await
         }

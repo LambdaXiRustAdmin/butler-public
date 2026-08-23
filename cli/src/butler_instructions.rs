@@ -15,14 +15,14 @@ ok:  {project,prompt:\"load_graph\"} | {project,prompt:\"src/gnn/forward.rs\"}\n
 bad: {prompt:\"how does auth work?\"} | {prompt:\"gdzie jest uwierzytelnianie?\"}  # no Ident\n\
 miss: no_structural_hits ONLY when edges_full — incomplete ⇒ symbol_not_seen_yet@N% (rewalk; not dead)\n\
 partial: Honest partial banner + confidence∈{inventory,index_exact,edges_partial,edges_full}; 0 callers so-far ≠ delete\n\
-loop: expect 2-3 butler_ask calls (orient/pin/trace); follow content next: — do not abandon for grep after first empty/partial\n\
+loop: expect 2-3 who_calls calls (orient/pin/trace); follow content next: — do not abandon for grep after first empty/partial\n\
 cold: content starts with \"=== Building Graph (cold)\" + progress bar → first open / empty cache; depending on repo size this may take a while (seconds…minutes); retry few seconds (MCP auto-retries); not stuck if %/file changes; auto-skips bundled-vendor segments (vendor/_vendor/_click/third_party/…) + docs_src; extend via analysis.extra_bundled_vendor_segments; Arch can use skeleton before edges done; scoring=inproc GNN; detail=short|long (aliases compact|dense); machine=structuredContent always";
 
 /// Full usage guide returned by `butler_help` and embedded MCP prompts.
 pub const BUTLER_ORCHESTRATE_INSTRUCTIONS: &str = "\
 === BUTLER (agent contract) ===\n\
-PRIMARY: butler_ask(project, symbol?, scope_paths?, mode=auto). Power: butler_orchestrate(goal=…). Legacy context/search/map/inspect only if expert_mode.\n\
-CRITICAL: structural questions (callers, blast, dual-stack, homonyms) → butler_ask first. grep/rg is blind to typed bridges (export/ipc) and floods context; do not fall back to grep after one empty butler result.\n\
+PRIMARY: who_calls(project, symbol?, scope_paths?, mode=auto). Internal alias: butler_ask. Power: butler_orchestrate(goal=…). Legacy context/search/map/inspect only if expert_mode.\n\
+CRITICAL: who-calls / unused? / rewire → who_calls first. grep forbidden for that question. rg OK for rename-all-text / string find. Do not grep after one empty pack.\n\
 \n\
 Butler.Query (structural; not NL)\n\
 ask: project:Path! symbol?:Ident query?:Ident|Path scope_paths?:Path[] mode?:auto|trace|find|arch detail?:short|long|compact|dense\n\
@@ -40,43 +40,43 @@ detail length (agent chooses — no mind-reading):\n\
   long|dense = full dump + larger neighbor sample (edit under pin)\n\
   Prefer short first; re-ask detail=long same scope_paths if sample thin. Honesty identical both ways.\n\
 Never JSON.parse(content) as sole report.\n\
-loop: expect 2–3 iterative butler_ask calls before concluding missing:\n\
+loop: expect 2–3 iterative who_calls calls before concluding missing:\n\
   (1) mode=arch if map unknown → suggested_scopes\n\
   (2) symbol may disambiguate → pin scope_paths from locations\n\
   (3) re-Trace short → optional detail=long under same pin\n\
 Always follow content line next: (or structured.next_action). Do not switch to bash grep after first empty/partial.\n";
 
-/// Primary MCP façade — one tool agents should default to.
-/// Aggressive pre-emption + multi-turn habit (OOD tool vs pre-trained grep).
-pub const BUTLER_ASK_TOOL_DESCRIPTION: &str = "\
-CRITICAL: PRIMARY tool for structural codebase questions (who calls X, blast radius, dual-stack/FFI, homonyms). \
-Always prefer this over grep/rg/find for those tasks — text search misses export/ipc bridges and pollutes context. \
-Expect 2–3 iterative calls before concluding a symbol is missing: (1) mode=arch if orientation needed, \
-(2) symbol Trace may return disambiguate → pin scope_paths from locations/suggested_scopes, \
-(3) re-ask same symbol with scope → success shows receipt: high|… in content. \
-On miss/disambiguate/BUILDING/partial: follow the content line next: (or structured.next_action); \
-do NOT abandon butler_ask for bash after one empty or partial result. \
-Args: project! symbol|target_symbol|query? mode∈{auto,trace,find,arch,map}? scope_paths? detail∈{short,long,compact,dense}?. \
-Ident/Path only (not NL chat). Prefer symbol+scope_paths for short names (App,Mutex,build,run). \
-Cold: status:BUILDING + toc + wait_policy — usable partial, not a hang. Soft wall ~15min: BUILDING_SOFT_WALL → operator then confirm_long_wait=true. \
-detail: short|compact (default)=dossier+tight sample; long|dense=full dump+larger sample — prefer short then long under same pin. \
-content short Trace = receipt, neighbors [basis|trust], reverse CALL spine, bridges, next; Arch short = tree+hubs+coverage+next. structuredContent=full machine report.";
+/// User-facing MCP door (`who_calls`). Internal alias remains `butler_ask`.
+/// Pain sentence first; buy line matches the pack (no “never miss a caller”).
+pub const WHO_CALLS_TOOL_DESCRIPTION: &str = "\
+Before you edit this function: here are the direct CALL callers / callees. Hop-2 is not a caller. \
+Do not patch until this pack (or honest empty). Wiring / unused? / rewire → who_calls first; grep forbidden for that question; rg OK for rename-all-text / string find. \
+Promise: same-language direct CALL, not every textual hit, not hop-2, not guaranteed cross-FFI. Go methods often 0 reverse CALL while real calls exist — 0 direct ≠ unused. \
+PRIMARY who_calls (internal butler_ask). Expect 2–3 iterative calls; follow content next:; do NOT abandon for bash after one empty. \
+Args: project! symbol|target_symbol? scope_paths? detail∈{short,long,compact,dense} mode∈{auto,trace,find,arch,map}?. Ident/Path only. Prefer short then long under same pin. \
+Server down → infra-skip (not a failed map). Cold: BUILDING + wait_policy; soft wall → confirm_long_wait.";
+
+/// Internal alias of `who_calls` — same schema, same dispatch.
+pub const BUTLER_ASK_TOOL_DESCRIPTION: &str = WHO_CALLS_TOOL_DESCRIPTION;
+
+pub const BUTLER_ASK_ALIAS_DESCRIPTION: &str =
+    "Internal name for who_calls. Same args. Prefer who_calls for who-calls / unused? / rewire. grep forbidden for that question.";
 
 pub const BUTLER_ORCHESTRATE_TOOL_DESCRIPTION: &str = "\
-Power tool: explicit goal routing. Prefer butler_ask for normal use. \
-Same multi-turn rules: structural queries here not grep; expect 2–3 calls; follow content next: on miss/disambiguate/BUILDING. \
+Power tool: explicit goal routing. Prefer who_calls for who-calls / unused? / rewire. \
+Same multi-turn rules: grep forbidden for who-calls; expect 2–3 calls; follow content next: on miss/disambiguate/BUILDING. \
 Args: project! goal∈{ArchitecturalSummary,TraceBlastRadius,FindImplementation} (synonyms: architect,trace,find) target_symbol? scope_paths? detail∈{short,long,compact,dense} confirm_long_wait?. \
 prompt≠NL: CodeGraph Ident/Path only. Mega-homonyms: pin scope_paths. Cold: BUILDING+wait_policy; detail short=dossier+tight sample, long=larger sample under pin.";
 
 /// Short description for `butler_help` in MCP tool lists and manifests.
 pub const BUTLER_HELP_TOOL_DESCRIPTION: &str =
-    "Butler.Query contract. PRIMARY butler_ask (not grep for structural). Expect 2–3 iterative asks; follow content next:. detail short|long (aliases compact|dense): short=receipt+basis+spine+bridges+next+tight sample; long=larger sample under pin. cold=BUILDING+wait_policy; soft wall→confirm_long_wait. miss=no_structural_hits only when edges_full else symbol_not_seen_yet@N%.";
+    "Butler.Query contract. PRIMARY who_calls (internal butler_ask). grep forbidden for who-calls. Expect 2–3 iterative asks; follow content next:. detail short|long. cold=BUILDING+wait_policy; soft wall→confirm_long_wait. 0 direct ≠ unused. Not hop-2. Not guaranteed cross-FFI.";
 
 /// Dense inline nudge when free-text looks like prose (prepended to results / guidance).
 pub fn dense_nl_nudge(reason: &str) -> String {
     format!(
         "[Butler.Query] prose_detected({reason}) → prompt must carry Ident|Path ∈ graph; prefer target_symbol. \
-next: butler_ask(project, symbol:<Ident>, scope_paths?) — not NL. contract: butler_help"
+next: who_calls(project, symbol:<Ident>, scope_paths?) — not NL. contract: butler_help"
     )
 }
 
@@ -90,7 +90,7 @@ pub fn dense_structural_miss(project: &str, prompt: &str, unmatched: &[String]) 
     format!(
         "Butler.Query miss no_structural_hits project={project:?} prompt={prompt:?}{u}\n\
          do_not: fall back to grep as first alternative — verify Ident/project first\n\
-         next: butler_ask(project={project:?}, symbol:<exact Ident>, scope_paths:[\"src/\"?]) or mode=arch to orient; check project root\n\
+         next: who_calls(project={project:?}, symbol:<exact Ident>, scope_paths:[\"src/\"?]) or mode=arch to orient; check project root\n\
          {contract}",
         contract = BUTLER_QUERY_CONTRACT
             .lines()
@@ -118,7 +118,7 @@ pub fn symbol_not_seen_yet_miss(
     format!(
         "Butler.Query provisional_miss symbol_not_seen_yet@{p}% project={project:?} prompt={prompt:?}{u}\n\
          do_not: treat as missing/dead code; do_not: abandon for grep — graph edges incomplete ({p}%)\n\
-         next: retry same butler_ask in ~30s (or when /mcp/health edge_builds percent climbs); optional tighter scope_paths\n\
+         next: retry same who_calls in ~30s (or when /mcp/health edge_builds percent climbs); optional tighter scope_paths\n\
          reserved: no_structural_hits is only for edges_full + zero membership\n\
          {contract}",
         contract = BUTLER_QUERY_CONTRACT
@@ -150,22 +150,31 @@ mod tests {
         assert!(m.contains("no_structural_hits"), "{m}");
         assert!(!m.contains("symbol_not_seen_yet"), "{m}");
         assert!(m.contains("next:"), "{m}");
-        assert!(m.contains("butler_ask"), "{m}");
+        assert!(m.contains("who_calls"), "{m}");
     }
 
     #[test]
     fn ask_tool_description_preempts_grep_and_mandates_loop() {
-        let d = BUTLER_ASK_TOOL_DESCRIPTION;
-        assert!(d.contains("CRITICAL"), "{d}");
+        let d = WHO_CALLS_TOOL_DESCRIPTION;
+        assert!(d.contains("Before you edit"), "{d}");
+        assert!(d.contains("Hop-2 is not a caller"), "{d}");
         assert!(d.contains("grep") || d.contains("rg"), "{d}");
         assert!(d.contains("2–3") || d.contains("2-3"), "{d}");
         assert!(d.contains("next:"), "{d}");
-        assert!(d.contains("do NOT") || d.contains("do not") || d.contains("Do not"), "{d}");
+        assert!(
+            d.contains("do NOT") || d.contains("do not") || d.contains("Do not"),
+            "{d}"
+        );
+        assert!(d.contains("0 direct"), "{d}");
+        assert!(!d.contains("you'll never miss"), "{d}");
     }
 
     #[test]
     fn instructions_loop_mentions_iterative_asks() {
-        assert!(BUTLER_ORCHESTRATE_INSTRUCTIONS.contains("2–3") || BUTLER_ORCHESTRATE_INSTRUCTIONS.contains("2-3"));
+        assert!(
+            BUTLER_ORCHESTRATE_INSTRUCTIONS.contains("2–3")
+                || BUTLER_ORCHESTRATE_INSTRUCTIONS.contains("2-3")
+        );
         assert!(BUTLER_ORCHESTRATE_INSTRUCTIONS.contains("next:"));
     }
 }

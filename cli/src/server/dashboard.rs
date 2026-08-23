@@ -64,7 +64,7 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
                 </ul>
             </li>
         </ol>
-        <p class="hint" style="margin:0">Full Alpha one-pager: <code>plans/ALPHA_SETUP.md</code> in the repo. Agents: MCP <code>butler_ask</code> → this server URL — not this HTML.</p>
+        <p class="hint" style="margin:0">Full Alpha one-pager: <code>plans/ALPHA_SETUP.md</code> in the repo. Agents: MCP <code>who_calls</code> → this server URL — not this HTML.</p>
         <p class="hint" style="margin:6px 0 0">
             Health: <code>GET /mcp/health</code> · Config: <code>~/.config/butler/config.toml</code> or <code>.butler/config.toml</code><br>
             <b>Username</b> defaults to this computer’s hostname (<code>server.username</code> / <code>BUTLER_USERNAME</code>).

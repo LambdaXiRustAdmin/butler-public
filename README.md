@@ -1,8 +1,8 @@
 # Butler
 
-**Structural maps for coding agents** — callers, callees, reverse spine, dual-stack bridges.
+**Before you edit this function:** here are the direct callers / callees. N total. Hop-2 is not a caller.
 
-**Not a RAG.** You get a **map pack**, not a whole-tree dump. Agents should Trace a symbol instead of inventing structure with `rg`.
+**Not a RAG.** You get a **map pack**, not a whole-tree dump. Door: MCP **`who_calls`** (internal `butler_ask`). grep is forbidden for who-calls.
 
 | | |
 |--|--|
@@ -22,6 +22,19 @@ Keepers and fixed gates are green on the tips we ship; **arbitrary repos may sof
 | Honest empty / disambiguate / BUILDING (not silent lies) | “Safe to delete” when callers = 0 (callbacks, DI, IPC…) |
 | Export / IPC bridges on dual-stack keepers | Install-and-forget SaaS |
 | Cold first hit may say `BUILDING` — **retry the same request** | Instant Complete on a huge monorepo with no warm |
+
+**Languages (parsers live; buy line = signed echo-shaped Trace):**
+
+| Lang | Signed? | Proof seed | Caveat |
+|------|---------|------------|--------|
+| Python | Yes | django `serializable_value` | Defining type can appear as a DIRECT caller |
+| Rust | Yes | fd `Batch` / `print_entry` | Pin short names |
+| TypeScript | Yes | next.js `getRequestMeta` | Type names on files that *do* call |
+| Go | **Yes — package funcs** | gin `assert1` | **Methods** often 0 reverse CALL (`ServeHTTP`, `AbortWithStatus`) |
+| C | Yes | curl `curl_easy_perform` | Score `foo(` not `.foo(` |
+| C++ | **Yes — distinctive names** | fmt `report_error` | Homonyms (`format`) need a pin |
+
+Soft-fail still applies on arbitrary trees.
 
 **Prove the tip (optional, after server is up):**
 
@@ -128,7 +141,9 @@ Offline cache warm (nice before first Trace on larger trees):
 
 Build the bridge: `cargo build --release -p cli` (includes `mcp`).
 
-**Skill (portable contract):** [`skills/butler-ask/SKILL.md`](./skills/butler-ask/SKILL.md) — prefer `butler_ask` for structure; follow `next:`; no structural grep when Butler is available.
+**Skill (portable contract):** [`skills/butler-ask/SKILL.md`](./skills/butler-ask/SKILL.md) — **`who_calls` first** for who-calls / unused? / rewire; grep **forbidden** for that question; follow `next:`.
+
+`who_calls` shape (MCP; internal alias `butler_ask`):
 
 ```json
 {
@@ -157,7 +172,7 @@ Default bind is **loopback** (`127.0.0.1`). Optional password: see [`docs/OPS.md
 ## What you get (product)
 
 - **Persistent CodeGraph** — skeleton scan, background FullEdge, multi-repo warehouse  
-- **Trace / Find / Arch** — via `POST /context` or MCP `butler_ask`  
+- **Trace / Find / Arch** — via `POST /context` or MCP `who_calls` (internal `butler_ask`)  
 - **Receipts** — confidence / basis / edges; disambiguate for homonyms; reverse CALL spine when present  
 - **Dual-stack floor** — Export / IPC bridges (not CALL soup)  
 - **Cold usable partial** — BUILDING + TOC; edges continue in background  
@@ -170,7 +185,8 @@ Default bind is **loopback** (`127.0.0.1`). Optional password: see [`docs/OPS.md
 
 | Tool | Role |
 |------|------|
-| **`butler_ask`** | **Primary.** `project` required; symbol / scope / mode |
+| **`who_calls`** | **Primary.** Direct callers/callees. grep forbidden for who-calls. |
+| `butler_ask` | Internal alias of `who_calls` |
 | `butler_orchestrate` | Explicit goals (power tool) |
 | `butler_help` | Usage contract |
 
@@ -192,6 +208,7 @@ Layered (low → high): defaults → `~/.config/butler/config.toml` → `.butler
 port = 8002
 warm_roots = ["/home/you/projects/my-app"]
 max_cached_graphs = 32
+# Session pin (not boot fleet): butler hold -r /path --server http://127.0.0.1:8002
 
 [analysis]
 edge_build_thread_pct = 0.75
@@ -206,8 +223,9 @@ use_neural = false
 
 | Variable | Purpose |
 |----------|---------|
-| `BUTLER_WARM_ROOTS` | Boot-warm roots (`:` or `,`) |
-| `BUTLER_QUERY_PARALLEL` | Max concurrent `/context` |
+| `BUTLER_WARM_ROOTS` | Boot-warm roots (`:` or `,`) — fleet pin at process start |
+| `butler hold` | On-purpose session pin: watcher + RAM skip idle/budget sleep. `~/.config/butler/last_state.json` → `hold_projects`. |
+| `BUTLER_QUERY_PARALLEL` | Max concurrent `/context` (default high) |
 | `BUTLER_FULLEDGE_PARALLEL` | Max concurrent FullEdge jobs (default 2) |
 | `BUTLER_EDGE_THREADS` | Absolute edge-build threads |
 | `BUTLER_VERBOSE=1` | Per-request logs |
