@@ -103,9 +103,11 @@ pub(super) fn is_last_state_root(root: &str) -> bool {
     root_n.ends_with(&last_n) || last_n.ends_with(&root_n)
 }
 
-/// Roots that must stay warm (boot warm_roots + BUTLER_WARM_ROOTS).
+/// Roots that must stay warm (boot warm_roots + BUTLER_WARM_ROOTS + `butler hold`).
 pub(super) fn pinned_warm_roots(state: &AppState) -> std::collections::HashSet<String> {
-    collect_warm_roots(&state.settings)
+    let mut roots = collect_warm_roots(&state.settings);
+    roots.extend(cli::session_state::list_hold_roots());
+    roots
         .into_iter()
         .map(|r| {
             let p = Path::new(&r);

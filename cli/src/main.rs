@@ -160,6 +160,66 @@ enum Commands {
         server: Option<String>,
     },
 
+    /// Keep a repo's warehouse watcher alive on purpose (pin against idle/budget sleep).
+    ///
+    /// Writes `hold_projects` in `~/.config/butler/last_state.json`. The running
+    /// server skips sleep for these roots. Pair with `--server` to register + start
+    /// the watcher now (same as `warm --server`).
+    ///
+    ///   butler hold -r /path/to/repo --server http://127.0.0.1:8002
+    ///   butler hold --list
+    ///   butler hold --release -r /path/to/repo
+    ///   butler hold --release
+    Hold {
+        /// Project root(s) to pin. Repeat `-r`. Default: current directory (unless `--list` / `--release` with no `-r`).
+        #[arg(long, short = 'r')]
+        root: Vec<String>,
+
+        /// Show pinned roots and exit.
+        #[arg(long)]
+        list: bool,
+
+        /// Drop the pin (one `-r`, or all holds if `-r` omitted).
+        #[arg(long)]
+        release: bool,
+
+        /// Also `POST /warm` so RAM + watcher start now.
+        #[arg(long)]
+        server: Option<String>,
+    },
+
+    /// Freeze a Trace pack (callers/callees/bridges/receipt) before an edit.
+    ///
+    /// Not Enola `baseline pin` and not Butler `scope_paths` pin.
+    /// Writes `<root>/.butler/freeze/<symbol>.json`.
+    Freeze {
+        /// Project root.
+        #[arg(long, short = 'r', default_value = ".")]
+        root: String,
+        /// Symbol to Trace (Ident).
+        #[arg(long, short = 's')]
+        symbol: String,
+        /// Working-set prefixes (repeat).
+        #[arg(long)]
+        scope: Vec<String>,
+        /// Butler HTTP base.
+        #[arg(long, default_value = "http://127.0.0.1:8002")]
+        server: String,
+    },
+
+    /// Re-Trace vs last freeze; HARD exit 1 on new complete-graph losses.
+    Check {
+        /// Project root (must match freeze).
+        #[arg(long, short = 'r', default_value = ".")]
+        root: String,
+        /// Symbol; default: first json in `.butler/freeze/`.
+        #[arg(long, short = 's')]
+        symbol: Option<String>,
+        /// Butler HTTP base.
+        #[arg(long, default_value = "http://127.0.0.1:8002")]
+        server: String,
+    },
+
     /// Run the stateful incremental harvester to produce gold fat graphs for GNN training.
     /// Uses unfiltered full CodeGraph + agentic LLM loop with tools for high accuracy data.
     /// Template is optional; you can configure everything via flags instead of editing JSON.
@@ -330,11 +390,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let top_n = settings.agent.neural_subgraph_top_n;
                 let hops = settings.agent.neural_subgraph_hops;
                 let subgraph = retrieve_prompt_subgraph(&graph, &prompt, top_n, hops);
-                code_graph::apply_heuristic_scores_subset(
-                    &mut graph,
-                    &prompt,
-                    &subgraph.node_ids,
-                );
+                code_graph::apply_heuristic_scores_subset(&mut graph, &prompt, &subgraph.node_ids);
                 let weights = load_weights(&root);
                 let bundle = build_scoring_input(&graph, &subgraph);
                 let raw = cpu_gnn_forward(
@@ -397,12 +453,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 println!("=== Baseline (hardcoded heuristics) top 5 ===");
                 for b in &baseline {
-                    println!(
-                        "- {} [{}] score={:.4}",
-                        b.name,
-                        b.file.display(),
-                        b.score
-                    );
+                    println!("- {} [{}] score={:.4}", b.name, b.file.display(), b.score);
                 }
                 println!("\n=== Neural (trained GNN) top 5 ===");
                 for b in &neural {
@@ -420,7 +471,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 // Quick distribution on subgraph neural cache
-                let mut neural_vals: Vec<f64> = graph.neural_score_cache.values().copied().collect();
+                let mut neural_vals: Vec<f64> =
+                    graph.neural_score_cache.values().copied().collect();
                 neural_vals.retain(|v| v.abs() > 1e-12);
                 neural_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 if !neural_vals.is_empty() {
@@ -561,7 +613,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             graph.is_edge_build_complete()
                         );
                     } else if full {
-                        println!("  --full: edges already complete; cache left as-is (Hop A no-op skip)");
+                        println!(
+                            "  --full: edges already complete; cache left as-is (Hop A no-op skip)"
+                        );
                     }
                 }
                 println!(
@@ -597,6 +651,114 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                      live RAM map: butler warm -r … --server http://127.0.0.1:8002"
                 );
             }
+        }
+        Some(Commands::Hold {
+            root,
+            list,
+            release,
+            server,
+        }) => {
+            if list {
+                let holds = cli::session_state::list_hold_roots();
+                if holds.is_empty() {
+                    println!("hold: (none) — butler hold -r /path --server http://127.0.0.1:8002");
+                } else {
+                    println!("hold: watcher stays up on purpose");
+                    for h in &holds {
+                        println!("  {h}");
+                    }
+                }
+                return Ok(());
+            }
+            if release {
+                let remaining = if root.is_empty() {
+                    cli::session_state::release_hold_root(None)?
+                } else {
+                    let mut last = Vec::new();
+                    for raw in &root {
+                        last = cli::session_state::release_hold_root(Some(raw))?;
+                    }
+                    last
+                };
+                if remaining.is_empty() {
+                    println!("hold: released (none remain)");
+                } else {
+                    println!("hold: remaining");
+                    for h in &remaining {
+                        println!("  {h}");
+                    }
+                }
+                return Ok(());
+            }
+            let targets = if root.is_empty() {
+                vec![".".to_string()]
+            } else {
+                root
+            };
+            let mut held: Vec<String> = Vec::new();
+            for raw in &targets {
+                match cli::session_state::add_hold_root(raw) {
+                    Ok(p) => {
+                        println!("hold: pinned {p} (idle/budget sleep will skip)");
+                        held.push(p);
+                    }
+                    Err(e) => eprintln!("{e}"),
+                }
+            }
+            if let Some(base) = server.as_ref() {
+                if !held.is_empty() {
+                    let url = format!("{}/warm", base.trim_end_matches('/'));
+                    println!("🔥 Notifying server {} ({} hold root(s))…", url, held.len());
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(120))
+                        .build()?;
+                    let body = serde_json::json!({ "roots": held });
+                    match client.post(&url).json(&body).send() {
+                        Ok(resp) => {
+                            let status = resp.status();
+                            let text = resp.text().unwrap_or_default();
+                            if status.is_success() {
+                                println!("  server: {}", text.trim());
+                            } else {
+                                eprintln!("  server HTTP {}: {}", status, text.trim());
+                            }
+                        }
+                        Err(e) => eprintln!("  server notify failed: {e}"),
+                    }
+                }
+            } else {
+                println!(
+                    "Tip: start watcher now with --server http://127.0.0.1:8002 \
+                     (pin is already saved; reaper honors it on the next tick)"
+                );
+            }
+        }
+        Some(Commands::Freeze {
+            root,
+            symbol,
+            scope,
+            server,
+        }) => {
+            let path = cli::freeze_loop::run_freeze(&root, &symbol, scope, &server)?;
+            println!("freeze: wrote {}", path.display());
+            return Ok(());
+        }
+        Some(Commands::Check {
+            root,
+            symbol,
+            server,
+        }) => {
+            let (before, _after, delta, path) =
+                cli::freeze_loop::run_check(&root, symbol.as_deref(), &server)?;
+            println!("check: {}", path.display());
+            cli::freeze_loop::print_delta(&before, &delta);
+            if delta.hard_fail(&before) {
+                std::process::exit(1);
+            }
+            if !delta.comparable {
+                std::process::exit(2);
+            }
+            return Ok(());
         }
         Some(Commands::ExportGraph { root }) => {
             let settings = cli::config::ButlerSettings::new();

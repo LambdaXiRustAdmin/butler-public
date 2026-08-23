@@ -5,6 +5,7 @@ pub mod session_state;
 pub mod butler_ask;
 pub mod butler_instructions;
 pub mod config;
+pub mod freeze_loop;
 pub mod harvester;
 pub mod mcp;
 pub mod mcp_schema;

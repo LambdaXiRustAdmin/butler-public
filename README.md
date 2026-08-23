@@ -10,6 +10,24 @@
 | **License** | MIT |
 | **Stage** | **Map Alpha** — careful dogfood, not GA |
 
+### Structural freeze / check (optional)
+
+Inspired by Enola’s pin → check agent loop
+([enola-labs/enola](https://github.com/enola-labs/enola)); Butler’s version is
+Trace-native (`butler freeze` / `butler check`) with dual-stack keepers and
+honesty-first receipts — not a multi-lang fact-model CI clone.
+
+Butler **pin** still means `scope_paths` (homonym). Freeze stores callers /
+callees / bridges / receipt under `.butler/freeze/`. Check re-Traces and fails
+only on **new** complete-graph losses (lost callers/callees/bridges, or
+high-conf ★ gone). BUILDING is incomparable, not a green pass.
+
+```bash
+butler freeze -r /path/to/repo -s from_posture_menus --scope crates/
+# edit
+butler check  -r /path/to/repo -s from_posture_menus
+```
+
 ---
 
 ## Alpha (read this)

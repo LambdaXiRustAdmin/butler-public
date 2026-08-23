@@ -78,10 +78,17 @@ pub fn client_token_from_env() -> Option<String> {
 /// Apply Bearer header when env token is set.
 pub fn apply_client_auth(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     match client_token_from_env() {
-        Some(tok) => req.header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {tok}"),
-        ),
+        Some(tok) => req.header(reqwest::header::AUTHORIZATION, format!("Bearer {tok}")),
+        None => req,
+    }
+}
+
+/// Blocking twin of [`apply_client_auth`] (`butler freeze` / `check`).
+pub fn apply_client_auth_blocking(
+    req: reqwest::blocking::RequestBuilder,
+) -> reqwest::blocking::RequestBuilder {
+    match client_token_from_env() {
+        Some(tok) => req.header(reqwest::header::AUTHORIZATION, format!("Bearer {tok}")),
         None => req,
     }
 }

@@ -21,6 +21,9 @@ pub struct LastState {
     /// Absolute project root last successfully used for Trace/context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_project: Option<String>,
+    /// Operator-pinned roots: watcher + RAM stay up on purpose (idle/budget sleep skips these).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hold_projects: Vec<String>,
     /// Local server base last used (default loopback).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_base_url: Option<String>,
@@ -76,6 +79,54 @@ pub fn save_last_state(state: &LastState) {
     if let Ok(bytes) = serde_json::to_vec_pretty(&s) {
         let _ = fs::write(path, bytes);
     }
+}
+
+/// Absolute existing directory, or `None`.
+pub fn normalize_hold_root(root: &str) -> Option<String> {
+    let raw = root.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = Path::new(raw);
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !abs.is_dir() {
+        return None;
+    }
+    Some(abs.to_string_lossy().into_owned())
+}
+
+/// Roots the operator pinned with `butler hold` (watcher stays up on purpose).
+pub fn list_hold_roots() -> Vec<String> {
+    let mut v = load_last_state().hold_projects;
+    v.retain(|s| !s.trim().is_empty());
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Pin `root` against warehouse idle/budget sleep. Returns the stored absolute path.
+pub fn add_hold_root(root: &str) -> Result<String, String> {
+    let abs = normalize_hold_root(root).ok_or_else(|| format!("hold: not a directory: {root}"))?;
+    let mut st = load_last_state();
+    if !st.hold_projects.iter().any(|r| r == &abs) {
+        st.hold_projects.push(abs.clone());
+    }
+    save_last_state(&st);
+    Ok(abs)
+}
+
+/// Drop one hold, or all holds when `root` is `None`. Returns remaining holds.
+pub fn release_hold_root(root: Option<&str>) -> Result<Vec<String>, String> {
+    let mut st = load_last_state();
+    if let Some(raw) = root {
+        let key = normalize_hold_root(raw).unwrap_or_else(|| raw.trim().to_string());
+        st.hold_projects
+            .retain(|r| r != &key && !r.ends_with(&key) && !key.ends_with(r));
+    } else {
+        st.hold_projects.clear();
+    }
+    save_last_state(&st);
+    Ok(list_hold_roots())
 }
 
 /// Remember a successful Trace project + URL for next session.
@@ -188,11 +239,16 @@ fn spawn_butler_server(base_url: &str) -> Result<PathBuf, String> {
         .stderr(Stdio::null())
         .env("BUTLER__SERVER__HOST", "127.0.0.1")
         .env("BUTLER__SERVER__PORT", port.to_string());
-    // Optional: warm last project at boot so first Trace is not cold BUILDING.
-    if let Some(proj) = load_last_state().last_project {
-        if Path::new(&proj).is_dir() {
-            cmd.env("BUTLER_WARM_ROOTS", &proj);
+    // Optional: warm last project + operator holds at boot so first Trace is not cold BUILDING.
+    let st = load_last_state();
+    let mut warm: Vec<String> = st.hold_projects.clone();
+    if let Some(proj) = st.last_project {
+        if Path::new(&proj).is_dir() && !warm.iter().any(|r| r == &proj) {
+            warm.push(proj);
         }
+    }
+    if !warm.is_empty() {
+        cmd.env("BUTLER_WARM_ROOTS", warm.join(":"));
     }
     cmd.spawn()
         .map_err(|e| format!("failed to spawn {}: {e}", path.display()))?;
@@ -298,6 +354,28 @@ mod tests {
             resolve_project_arg(Some("/tmp/foo")),
             Some("/tmp/foo".into())
         );
+    }
+
+    #[test]
+    fn last_state_hold_projects_roundtrip() {
+        let raw = r#"{"version":1,"hold_projects":["/tmp/a"],"updated_unix":1}"#;
+        let st: LastState = serde_json::from_str(raw).unwrap();
+        assert_eq!(st.hold_projects, vec!["/tmp/a".to_string()]);
+        let empty: LastState = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        assert!(empty.hold_projects.is_empty());
+    }
+
+    #[test]
+    fn normalize_hold_root_requires_dir() {
+        let dir = std::env::temp_dir().join(format!("butler_hold_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let got = normalize_hold_root(&dir.to_string_lossy()).expect("dir");
+        assert!(
+            got.ends_with(dir.file_name().unwrap().to_string_lossy().as_ref())
+                || Path::new(&got).is_dir()
+        );
+        assert!(normalize_hold_root("/no/such/butler_hold_dir_zzz").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
