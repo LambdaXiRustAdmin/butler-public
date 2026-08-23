@@ -7,7 +7,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{http::StatusCode, Json};
 use code_graph::graph_cache_exists;
@@ -39,6 +39,38 @@ pub(super) enum LoadLobbyOutcome {
     Ready(LoadLobbyReady),
 }
 
+fn graph_has_nodes(state: &AppState, root: &str) -> bool {
+    state
+        .graphs
+        .blocking_read()
+        .get(root)
+        .and_then(|g| g.try_read().ok())
+        .is_some_and(|g| !g.nodes.is_empty())
+}
+
+/// Wait until nodes appear **or** `budget` elapses, whichever first.
+fn wait_for_nodes(state: &AppState, root: &str, budget: Duration) -> bool {
+    if graph_has_nodes(state, root) {
+        return true;
+    }
+    if budget.is_zero() {
+        return false;
+    }
+    let start = Instant::now();
+    let slice = Duration::from_millis(25);
+    while start.elapsed() < budget {
+        let left = budget.saturating_sub(start.elapsed());
+        if left.is_zero() {
+            break;
+        }
+        std::thread::sleep(slice.min(left));
+        if graph_has_nodes(state, root) {
+            return true;
+        }
+    }
+    graph_has_nodes(state, root)
+}
+
 /// In-progress guard → double-checked graph cache admit → pressure retry → layout defaults.
 pub(super) fn try_load_lobby(
     state: &AppState,
@@ -46,51 +78,51 @@ pub(super) fn try_load_lobby(
     root: &str,
     overall_start: Instant,
 ) -> LoadLobbyOutcome {
-    // In progress guard (first-use: hang-on + progress meter, not a silent hang).
-    // If a skeleton is already in the cache (progressive publish / almost-done load),
-    // never black out with sticky 40% — serve the warehouse.
+    // In-progress: wait until done **or** grace (whichever first). Fast hydrates
+    // return the answer; only still-empty after grace emits BUILDING/hydrating.
+    // Do not wait here if nothing is loading (first miss spawns below).
     {
-        let has_skeleton = state
-            .graphs
-            .blocking_read()
-            .get(root)
-            .and_then(|g| g.try_read().ok())
-            .is_some_and(|g| !g.nodes.is_empty());
-        if !has_skeleton {
-            let in_progress = state.in_progress.blocking_read();
-            if let Some(progress) = in_progress.get(root) {
-                // Progressive L1 may have published nodes under a different key/race —
-                // prefer usable BUILDING with TOC when any graph is readable.
-                let toc = state
-                    .graphs
-                    .blocking_read()
-                    .get(root)
-                    .and_then(|g| g.try_read().ok())
-                    .map(|g| build_status::cheap_toc_dirs(&g, 12))
-                    .unwrap_or_default();
-                let confirm = req.confirm_long_wait.unwrap_or(false);
-                let (msg, wait_json) = build_status::phase1_progress_message_with_toc_confirm(
-                    root, progress, &toc, confirm,
-                );
-                let soft = msg.contains("BUILDING_SOFT_WALL");
-                return LoadLobbyOutcome::Early(Ok((
-                    StatusCode::OK,
-                    Json(
-                        crate::server::filters::degenerate_context_response_structured(
-                            msg,
-                            Some("graph_building".to_string()),
-                            Some(if soft {
-                                "building_soft_wall".to_string()
-                            } else {
-                                "building".to_string()
-                            }),
-                            0,
-                            false,
-                            overall_start.elapsed().as_millis() as u64,
-                            Some(wait_json),
+        if !graph_has_nodes(state, root) && {
+            let ip = state.in_progress.blocking_read();
+            ip.contains_key(root)
+        } {
+            let grace = Duration::from_millis(build_status::hydrate_answer_grace_ms());
+            if !wait_for_nodes(state, root, grace) {
+                let in_progress = state.in_progress.blocking_read();
+                if let Some(progress) = in_progress.get(root) {
+                    // Progressive L1 may have published nodes under a different key/race —
+                    // prefer usable BUILDING with TOC when any graph is readable.
+                    let toc = state
+                        .graphs
+                        .blocking_read()
+                        .get(root)
+                        .and_then(|g| g.try_read().ok())
+                        .map(|g| build_status::cheap_toc_dirs(&g, 12))
+                        .unwrap_or_default();
+                    let confirm = req.confirm_long_wait.unwrap_or(false);
+                    let (msg, wait_json) = build_status::phase1_progress_message_with_toc_confirm(
+                        root, progress, &toc, confirm,
+                    );
+                    let soft = msg.contains("BUILDING_SOFT_WALL");
+                    return LoadLobbyOutcome::Early(Ok((
+                        StatusCode::OK,
+                        Json(
+                            crate::server::filters::degenerate_context_response_structured(
+                                msg,
+                                Some("graph_building".to_string()),
+                                Some(if soft {
+                                    "building_soft_wall".to_string()
+                                } else {
+                                    "building".to_string()
+                                }),
+                                0,
+                                false,
+                                overall_start.elapsed().as_millis() as u64,
+                                Some(wait_json),
+                            ),
                         ),
-                    ),
-                )));
+                    )));
+                }
             }
         }
     }
@@ -113,20 +145,25 @@ pub(super) fn try_load_lobby(
                     drop(cache);
                     spawn_async_graph_load(state, root, Arc::clone(&g_rw));
                     touch_graph_lru(state, root);
-                    let msg = if graph_cache_exists(root) {
-                        build_status::hydrating_graph_message(0)
+                    let grace = Duration::from_millis(build_status::hydrate_answer_grace_ms());
+                    if wait_for_nodes(state, root, grace) {
+                        g_rw
                     } else {
-                        build_status::building_graph_message(0)
-                    };
-                    return LoadLobbyOutcome::Early(building_graph_response_with_policy(
-                        state,
-                        root,
-                        msg,
-                        0,
-                        false,
-                        overall_start,
-                        req.confirm_long_wait.unwrap_or(false),
-                    ));
+                        let msg = if graph_cache_exists(root) {
+                            build_status::hydrating_graph_message(0)
+                        } else {
+                            build_status::building_graph_message(0)
+                        };
+                        return LoadLobbyOutcome::Early(building_graph_response_with_policy(
+                            state,
+                            root,
+                            msg,
+                            0,
+                            false,
+                            overall_start,
+                            req.confirm_long_wait.unwrap_or(false),
+                        ));
+                    }
                 }
             }
         }

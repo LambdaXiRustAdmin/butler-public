@@ -26,6 +26,20 @@ pub fn progress_bar(percent: usize, width: usize) -> String {
     )
 }
 
+/// Cap on “wait until hydrate is done **or** this many ms, whichever first.”
+///
+/// Hot Trace is tens–hundreds of ms; many hydrates finish in that window.
+/// Saying “hydrating” immediately forces MCP onto `retry_after_ms` (~1.5s)
+/// for work that already finished. Env `BUTLER_HYDRATE_GRACE_MS`, default **500**.
+/// `0` disables the wait (tests / never-block).
+pub fn hydrate_answer_grace_ms() -> u64 {
+    std::env::var("BUTLER_HYDRATE_GRACE_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(|n: u64| n.min(5_000))
+        .unwrap_or(500)
+}
+
 /// Soft wall for cold open / hydrate (seconds). Env `BUTLER_SOFT_WALL_SECS`, default **900** (15 min).
 pub fn soft_wall_secs() -> u64 {
     std::env::var("BUTLER_SOFT_WALL_SECS")
@@ -1110,6 +1124,18 @@ mod usable_building_tests {
         assert!(msg.contains("Not a hang") || msg.contains("not a hang"), "{msg}");
         assert!(msg.contains("retry_after_ms:"), "{msg}");
         assert!(msg.contains("soft_wall_s:"), "{msg}");
+    }
+
+    #[test]
+    fn hydrate_answer_grace_default_is_answer_shaped() {
+        // Don't inherit a caller env (cargo test process).
+        std::env::remove_var("BUTLER_HYDRATE_GRACE_MS");
+        assert_eq!(hydrate_answer_grace_ms(), 500);
+        std::env::set_var("BUTLER_HYDRATE_GRACE_MS", "0");
+        assert_eq!(hydrate_answer_grace_ms(), 0);
+        std::env::set_var("BUTLER_HYDRATE_GRACE_MS", "99999");
+        assert_eq!(hydrate_answer_grace_ms(), 5_000);
+        std::env::remove_var("BUTLER_HYDRATE_GRACE_MS");
     }
 
     #[test]
