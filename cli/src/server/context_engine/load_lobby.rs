@@ -3,7 +3,7 @@
 //! In-progress hang-on, async graph admit (never block /context on load_graph),
 //! pressure-defer retry, first-use layout defaults, graph-ready telemetry.
 //!
-//! Zero intentional behavior change.
+//! Start-grace: wait until hydrate/BUILDING/starting is done **or** budget, whichever first.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -39,22 +39,59 @@ pub(super) enum LoadLobbyOutcome {
     Ready(LoadLobbyReady),
 }
 
-fn graph_has_nodes(state: &AppState, root: &str) -> bool {
-    state
-        .graphs
-        .blocking_read()
-        .get(root)
-        .and_then(|g| g.try_read().ok())
-        .is_some_and(|g| !g.nodes.is_empty())
+/// Sight of the RAM graph. `try_read` fail is **not** empty — a warm repo
+/// under a brief write lock (incremental edges) used to look like 0 nodes
+/// and flash BUILDING after the start-grace.
+enum GraphSight {
+    Nodes,
+    Empty,
+    LockBusy,
+    Missing,
 }
 
-/// Wait until nodes appear **or** `budget` elapses, whichever first.
+fn graph_sight(state: &AppState, root: &str) -> GraphSight {
+    let Some(g) = state.graphs.blocking_read().get(root).cloned() else {
+        return GraphSight::Missing;
+    };
+    let sight = match g.try_read() {
+        Ok(gg) if gg.nodes.is_empty() => GraphSight::Empty,
+        Ok(_) => GraphSight::Nodes,
+        Err(_) => GraphSight::LockBusy,
+    };
+    sight
+}
+
+fn graph_has_nodes(state: &AppState, root: &str) -> bool {
+    matches!(graph_sight(state, root), GraphSight::Nodes)
+}
+
+/// True when a hydrate / Phase-1 / cold scan thread is still registered.
+/// Lock busy → assume in flight (do not treat as done).
+fn load_in_flight(state: &AppState, root: &str) -> bool {
+    match state.in_progress.try_read() {
+        Ok(m) => m.contains_key(root),
+        Err(_) => true,
+    }
+}
+
+fn sight_is_ready(sight: GraphSight, in_flight: bool) -> bool {
+    match sight {
+        GraphSight::Nodes => true,
+        // Warm graph, writer held, no scan thread — serve path brief-blocks.
+        GraphSight::LockBusy if !in_flight => true,
+        _ => false,
+    }
+}
+
+/// Wait until nodes appear, the load finishes, **or** `budget` elapses — whichever first.
+/// Lock-busy on a resident graph is ready, not BUILDING.
 fn wait_for_nodes(state: &AppState, root: &str, budget: Duration) -> bool {
-    if graph_has_nodes(state, root) {
+    let in_flight = load_in_flight(state, root);
+    if sight_is_ready(graph_sight(state, root), in_flight) {
         return true;
     }
-    if budget.is_zero() {
-        return false;
+    if budget.is_zero() || !in_flight {
+        return sight_is_ready(graph_sight(state, root), load_in_flight(state, root));
     }
     let start = Instant::now();
     let slice = Duration::from_millis(25);
@@ -64,11 +101,15 @@ fn wait_for_nodes(state: &AppState, root: &str, budget: Duration) -> bool {
             break;
         }
         std::thread::sleep(slice.min(left));
-        if graph_has_nodes(state, root) {
+        let in_flight = load_in_flight(state, root);
+        if sight_is_ready(graph_sight(state, root), in_flight) {
             return true;
         }
+        if !in_flight {
+            break;
+        }
     }
-    graph_has_nodes(state, root)
+    sight_is_ready(graph_sight(state, root), load_in_flight(state, root))
 }
 
 /// In-progress guard → double-checked graph cache admit → pressure retry → layout defaults.
@@ -78,55 +119,6 @@ pub(super) fn try_load_lobby(
     root: &str,
     overall_start: Instant,
 ) -> LoadLobbyOutcome {
-    // In-progress: wait until done **or** grace (whichever first). Fast hydrates
-    // return the answer; only still-empty after grace emits BUILDING/hydrating.
-    // Do not wait here if nothing is loading (first miss spawns below).
-    {
-        if !graph_has_nodes(state, root) && {
-            let ip = state.in_progress.blocking_read();
-            ip.contains_key(root)
-        } {
-            let grace = Duration::from_millis(build_status::hydrate_answer_grace_ms());
-            if !wait_for_nodes(state, root, grace) {
-                let in_progress = state.in_progress.blocking_read();
-                if let Some(progress) = in_progress.get(root) {
-                    // Progressive L1 may have published nodes under a different key/race —
-                    // prefer usable BUILDING with TOC when any graph is readable.
-                    let toc = state
-                        .graphs
-                        .blocking_read()
-                        .get(root)
-                        .and_then(|g| g.try_read().ok())
-                        .map(|g| build_status::cheap_toc_dirs(&g, 12))
-                        .unwrap_or_default();
-                    let confirm = req.confirm_long_wait.unwrap_or(false);
-                    let (msg, wait_json) = build_status::phase1_progress_message_with_toc_confirm(
-                        root, progress, &toc, confirm,
-                    );
-                    let soft = msg.contains("BUILDING_SOFT_WALL");
-                    return LoadLobbyOutcome::Early(Ok((
-                        StatusCode::OK,
-                        Json(
-                            crate::server::filters::degenerate_context_response_structured(
-                                msg,
-                                Some("graph_building".to_string()),
-                                Some(if soft {
-                                    "building_soft_wall".to_string()
-                                } else {
-                                    "building".to_string()
-                                }),
-                                0,
-                                false,
-                                overall_start.elapsed().as_millis() as u64,
-                                Some(wait_json),
-                            ),
-                        ),
-                    )));
-                }
-            }
-        }
-    }
-
     // Graph load (double checked). P0: never block /context on load_graph — always async.
     let graph_load_start = Instant::now();
     let graph_rw: Arc<std::sync::RwLock<code_graph::CodeGraph>> = {
@@ -145,29 +137,68 @@ pub(super) fn try_load_lobby(
                     drop(cache);
                     spawn_async_graph_load(state, root, Arc::clone(&g_rw));
                     touch_graph_lru(state, root);
-                    let grace = Duration::from_millis(build_status::hydrate_answer_grace_ms());
-                    if wait_for_nodes(state, root, grace) {
-                        g_rw
-                    } else {
-                        let msg = if graph_cache_exists(root) {
-                            build_status::hydrating_graph_message(0)
-                        } else {
-                            build_status::building_graph_message(0)
-                        };
-                        return LoadLobbyOutcome::Early(building_graph_response_with_policy(
-                            state,
-                            root,
-                            msg,
-                            0,
-                            false,
-                            overall_start,
-                            req.confirm_long_wait.unwrap_or(false),
-                        ));
-                    }
+                    g_rw
                 }
             }
         }
     };
+
+    // One start-grace for hydrate, BUILDING, and empty-shell "starting": wait until
+    // nodes appear **or** budget, whichever first. A write lock on a resident graph
+    // is not empty — do not BUILDING rust-rage because try_read failed.
+    if !graph_has_nodes(state, root) {
+        let grace = Duration::from_millis(build_status::hydrate_answer_grace_ms());
+        if !wait_for_nodes(state, root, grace)
+            && !matches!(graph_sight(state, root), GraphSight::LockBusy)
+        {
+            let in_progress = state.in_progress.blocking_read();
+            if let Some(progress) = in_progress.get(root) {
+                let confirm = req.confirm_long_wait.unwrap_or(false);
+                if graph_cache_exists(root) {
+                    drop(in_progress);
+                    return LoadLobbyOutcome::Early(building_graph_response_with_policy(
+                        state,
+                        root,
+                        build_status::hydrating_graph_message(0),
+                        0,
+                        false,
+                        overall_start,
+                        confirm,
+                    ));
+                }
+                let toc = state
+                    .graphs
+                    .blocking_read()
+                    .get(root)
+                    .and_then(|g| g.try_read().ok())
+                    .map(|g| build_status::cheap_toc_dirs(&g, 12))
+                    .unwrap_or_default();
+                let (msg, wait_json) = build_status::phase1_progress_message_with_toc_confirm(
+                    root, progress, &toc, confirm,
+                );
+                let soft = msg.contains("BUILDING_SOFT_WALL");
+                return LoadLobbyOutcome::Early(Ok((
+                    StatusCode::OK,
+                    Json(
+                        crate::server::filters::degenerate_context_response_structured(
+                            msg,
+                            Some("graph_building".to_string()),
+                            Some(if soft {
+                                "building_soft_wall".to_string()
+                            } else {
+                                "building".to_string()
+                            }),
+                            0,
+                            false,
+                            overall_start.elapsed().as_millis() as u64,
+                            Some(wait_json),
+                        ),
+                    ),
+                )));
+            }
+            // Load finished empty (or never started): not BUILDING — compose empty-graph.
+        }
+    }
     // In-memory hit (async load already completed, or warm root). First miss always returned above.
     let is_cached = true;
     touch_graph_lru(state, root);
@@ -211,7 +242,10 @@ pub(super) fn try_load_lobby(
 
     vprintln!(
         "✅ Graph ready — {} {} (project: {}) | load_time={:.2?}",
-        node_count, node_count_src, root, graph_load_time
+        node_count,
+        node_count_src,
+        root,
+        graph_load_time
     );
 
     LoadLobbyOutcome::Ready(LoadLobbyReady {

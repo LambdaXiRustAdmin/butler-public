@@ -26,12 +26,13 @@ pub fn progress_bar(percent: usize, width: usize) -> String {
     )
 }
 
-/// Cap on “wait until hydrate is done **or** this many ms, whichever first.”
+/// Cap on “wait until start is done **or** this many ms, whichever first.”
 ///
-/// Hot Trace is tens–hundreds of ms; many hydrates finish in that window.
-/// Saying “hydrating” immediately forces MCP onto `retry_after_ms` (~1.5s)
-/// for work that already finished. Env `BUTLER_HYDRATE_GRACE_MS`, default **500**.
-/// `0` disables the wait (tests / never-block).
+/// Covers hydrate, Phase-1 BUILDING, and empty-shell “starting” — any not-yet-
+/// answerable start. Hot Trace is tens–hundreds of ms; many starts finish in
+/// that window. Saying BUILDING/hydrating immediately forces MCP onto
+/// `retry_after_ms` (~1.5s) for work that already finished.
+/// Env `BUTLER_HYDRATE_GRACE_MS`, default **500**. `0` disables the wait.
 pub fn hydrate_answer_grace_ms() -> u64 {
     std::env::var("BUTLER_HYDRATE_GRACE_MS")
         .ok()
@@ -700,23 +701,17 @@ pub fn try_phase1_scan_building(
         if !g.nodes.is_empty() {
             return None;
         }
-        if g.nodes.is_empty() && !g.is_ready_to_serve() {
-            // Fall through to in_progress message if any; else starting shell.
-            if state
+        // Idle empty shell is not "starting" — lobby already waited the start grace.
+        // Compose path reports empty-graph / wrong-root. Only hang-on while a load is live.
+        if g.nodes.is_empty()
+            && !g.is_ready_to_serve()
+            && !state
                 .in_progress
                 .try_read()
                 .ok()
                 .is_some_and(|m| m.contains_key(root))
-            {
-                // empty shell + scanning
-            } else {
-                return Some(building_progress_message(
-                    0,
-                    "scan (starting)",
-                    Some("empty graph shell"),
-                    None,
-                ));
-            }
+        {
+            return None;
         }
     }
     if let Ok(map) = state.in_progress.try_read() {
@@ -1129,6 +1124,7 @@ mod usable_building_tests {
     #[test]
     fn hydrate_answer_grace_default_is_answer_shaped() {
         // Don't inherit a caller env (cargo test process).
+        // Same cap for hydrate, BUILDING, and empty-shell start.
         std::env::remove_var("BUTLER_HYDRATE_GRACE_MS");
         assert_eq!(hydrate_answer_grace_ms(), 500);
         std::env::set_var("BUTLER_HYDRATE_GRACE_MS", "0");
