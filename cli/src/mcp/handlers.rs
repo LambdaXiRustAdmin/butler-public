@@ -117,25 +117,79 @@ fn retry_after_from_backend(backend: &serde_json::Value) -> Duration {
 }
 
 /// Cold SLA usable partial — return immediately to the agent (do not poll away TOC).
+///
+/// Status BUILDING alone is **not** usable (empty shell / who_calls pack miss).
+/// Require a TOC/skeleton/hubs/callers answer, or the explicit usable-partial banner.
 fn is_usable_building_partial(content: &str, backend: &serde_json::Value) -> bool {
     if is_soft_wall(content, backend) {
         return true; // surface "are you sure?" — never auto-poll past soft wall
     }
-    if content.contains("status: BUILDING") && content.contains("Usable while building") {
+    if has_answer_pack(backend) {
         return true;
     }
-    backend
-        .get("structured")
-        .and_then(|s| s.get("telemetry"))
-        .and_then(|t| t.get("usable_while_building"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    content.contains("status: BUILDING") && content.contains("Usable while building")
+}
+
+fn request_wants_symbol_pack(params: &serde_json::Value) -> bool {
+    params
+        .get("target_symbol")
+        .or_else(|| params.get("symbol"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+fn backend_is_building(content: &str, backend: &serde_json::Value) -> bool {
+    if is_graph_building_marker(content) {
+        return true;
+    }
+    matches!(
+        backend.get("warning").and_then(|v| v.as_str()),
+        Some("graph_building") | Some("building")
+    ) || backend.get("mode").and_then(|v| v.as_str()) == Some("building")
         || backend
             .get("structured")
-            .and_then(|s| s.get("telemetry"))
-            .and_then(|t| t.get("status"))
+            .and_then(|s| {
+                s.get("telemetry")
+                    .and_then(|t| t.get("status"))
+                    .or_else(|| s.get("wait_policy").and_then(|w| w.get("status")))
+            })
             .and_then(|v| v.as_str())
-            == Some("BUILDING")
+            .is_some_and(|s| s.starts_with("BUILDING"))
+}
+
+/// Real Trace/Arch payload (not wait_policy-only BUILDING).
+fn has_answer_pack(backend: &serde_json::Value) -> bool {
+    let Some(st) = backend.get("structured") else {
+        return false;
+    };
+    let nonempty = |k: &str| {
+        st.get(k)
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty())
+    };
+    nonempty("callers")
+        || nonempty("callees")
+        || nonempty("skeleton")
+        || nonempty("hubs")
+        || st.get("target").is_some_and(|t| t.is_object())
+}
+
+/// who_calls / Trace: keep polling empty BUILDING. Arch with TOC is usable now.
+fn should_poll_building(
+    params: &serde_json::Value,
+    content: &str,
+    backend: &serde_json::Value,
+) -> bool {
+    if is_soft_wall(content, backend) {
+        return false;
+    }
+    if !backend_is_building(content, backend) {
+        return false;
+    }
+    if has_answer_pack(backend) {
+        return false;
+    }
+    request_wants_symbol_pack(params) || !is_usable_building_partial(content, backend)
 }
 
 fn has_structured_payload(backend: &serde_json::Value) -> bool {
@@ -198,7 +252,23 @@ pub async fn handle_butler_context(
                     .and_then(|c| c.as_str())
                     .unwrap_or("");
 
-                // Soft wall / usable cold partial: never poll away — agent decides / works now.
+                // Soft wall: never auto-poll past "are you sure?".
+                if is_soft_wall(content, &backend) {
+                    return backend_context_to_mcp_result(&backend);
+                }
+
+                // Symbol Trace / empty-shell BUILDING: poll until a pack (or retries exhaust).
+                if should_poll_building(&params, content, &backend) {
+                    let wait = retry_after_from_backend(&backend);
+                    crate::mcp_diag!(
+                        "Graph building (attempt {}/15), adaptive sleep {}ms...",
+                        attempt + 1,
+                        wait.as_millis()
+                    );
+                    sleep(wait).await;
+                    continue;
+                }
+
                 if is_usable_building_partial(content, &backend) {
                     return backend_context_to_mcp_result(&backend);
                 }
@@ -299,6 +369,36 @@ mod tests {
     }
 
     #[test]
+    fn symbol_trace_empty_building_polls() {
+        let params = serde_json::json!({ "target_symbol": "try_copy_from_holding" });
+        let content = "=== Building Graph (working (cold)) (0%) ===\nstatus: BUILDING\n";
+        let backend = serde_json::json!({
+            "content": content,
+            "warning": "graph_building",
+            "mode": "building",
+            "structured": { "wait_policy": { "status": "BUILDING", "retry_after_ms": 1500 } }
+        });
+        assert!(should_poll_building(&params, content, &backend));
+        assert!(!has_answer_pack(&backend));
+    }
+
+    #[test]
+    fn arch_toc_building_does_not_poll() {
+        let params = serde_json::json!({ "goal": "ArchitecturalSummary" });
+        let content = "=== Building Graph (12%) ===\n\n=== Usable while building ===\nstatus: BUILDING\n";
+        let backend = serde_json::json!({
+            "content": content,
+            "structured": {
+                "skeleton": ["src/"],
+                "telemetry": { "status": "BUILDING", "usable_while_building": true }
+            }
+        });
+        assert!(!should_poll_building(&params, content, &backend));
+        assert!(has_answer_pack(&backend));
+        assert!(is_usable_building_partial(content, &backend));
+    }
+
+    #[test]
     fn structured_payload_skips_building_poll_even_when_content_has_status_prefix() {
         let backend = serde_json::json!({
             "content": "=== Building Graph (100%) ===\nArchitectural summary: 5 skeleton paths, 3 hubs.",
@@ -310,6 +410,12 @@ mod tests {
         assert!(has_structured_payload(&backend));
         assert!(is_graph_building_marker(
             backend["content"].as_str().unwrap()
+        ));
+        assert!(has_answer_pack(&backend));
+        assert!(!should_poll_building(
+            &serde_json::json!({}),
+            backend["content"].as_str().unwrap(),
+            &backend
         ));
     }
 
