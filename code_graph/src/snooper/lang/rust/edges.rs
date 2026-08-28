@@ -25,7 +25,9 @@ pub(crate) fn collect_call_edges(
         source,
         tree,
         global_names,
-        &["function_item", "impl_item", "trait_item"],
+        // Methods live as function_item inside impl/trait. Treating impl_item as a
+        // caller duplicated every method CALL onto an `unknown` impl shell.
+        &["function_item"],
         &["function_item"],
         || Query::new(&tree_sitter_rust::LANGUAGE.into(), CALL_QUERY),
         |b, src| {
@@ -308,5 +310,52 @@ fn rebuild_fragments() {
                 "{name} must CALL Type::from_posture_menus via global; edges={edges:?}"
             );
         }
+    }
+
+    #[test]
+    fn rust_impl_shell_is_not_a_call_parent() {
+        let src = r#"
+impl SelfResidualLook {
+    fn from_tanks() {
+        from_posture_menus();
+    }
+}
+fn from_posture_menus() {}
+"#;
+        let parsed = parse_file(Path::new("residual_look.rs"), src).expect("parse");
+        let tree = parsed.tree.as_ref().expect("tree");
+        let edges = collect_call_edges(&parsed.blocks, src, tree, None);
+        let impl_id = parsed
+            .blocks
+            .iter()
+            .find(|b| b.kind == "impl_item")
+            .map(|b| b.id.clone());
+        let target = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "from_posture_menus" && b.kind == "function_item")
+            .expect("target");
+        let method = parsed
+            .blocks
+            .iter()
+            .find(|b| b.name == "from_tanks" && b.kind == "function_item")
+            .expect("method");
+        if let Some(impl_id) = impl_id {
+            assert!(
+                !edges.iter().any(|(f, _)| f == &impl_id),
+                "impl shell must not be a CALL parent; names={:?}",
+                parsed
+                    .blocks
+                    .iter()
+                    .map(|b| (b.kind.as_str(), b.name.as_str()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            edges
+                .iter()
+                .any(|(f, t)| f == &method.id && t == &target.id),
+            "from_tanks must CALL from_posture_menus; edges={edges:?}"
+        );
     }
 }

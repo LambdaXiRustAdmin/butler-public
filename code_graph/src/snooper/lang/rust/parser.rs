@@ -85,7 +85,33 @@ fn rust_get_start(node: &Node, _source: &str) -> (usize, usize) {
     (start_line, start_byte)
 }
 
+fn last_type_ident(node: &Node, source: &str) -> Option<String> {
+    if node.kind() == "type_identifier" || node.kind() == "identifier" {
+        let s = source[node.start_byte()..node.end_byte()].to_string();
+        if !s.is_empty() && !matches!(s.as_str(), "crate" | "self" | "super") {
+            return Some(s);
+        }
+    }
+    let mut last = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(n) = last_type_ident(&child, source) {
+            last = Some(n);
+        }
+    }
+    last
+}
+
 fn extract_name(node: &Node, source: &str) -> Option<String> {
+    // `impl Type` / `impl Trait for Type` — field is `type`, not `name`.
+    // Without this, impl shells are named `unknown` and Type::method seeds miss.
+    if node.kind() == "impl_item" {
+        if let Some(ty) = node.child_by_field_name("type") {
+            if let Some(n) = last_type_ident(&ty, source) {
+                return Some(n);
+            }
+        }
+    }
     // Prefer grammar `name` field — walking children hits `crate` inside `pub(crate)`.
     if let Some(name_node) = node.child_by_field_name("name") {
         let s = source[name_node.start_byte()..name_node.end_byte()].to_string();
@@ -100,7 +126,11 @@ fn extract_name(node: &Node, source: &str) -> Option<String> {
             continue;
         }
         if child.kind() == "identifier" || child.kind() == "type_identifier" {
-            return Some(source[child.start_byte()..child.end_byte()].to_string());
+            let s = source[child.start_byte()..child.end_byte()].to_string();
+            if matches!(s.as_str(), "crate" | "self" | "super") {
+                continue;
+            }
+            return Some(s);
         }
     }
     None
@@ -290,5 +320,15 @@ impl S {
         assert!(parsed.blocks.iter().any(|b| b.name == "foo"));
         assert!(parsed.blocks.iter().any(|b| b.kind == "struct_item"));
         assert!(parsed.blocks.iter().any(|b| b.kind == "impl_item"));
+        let impls: Vec<_> = parsed
+            .blocks
+            .iter()
+            .filter(|b| b.kind == "impl_item")
+            .map(|b| b.name.as_str())
+            .collect();
+        assert!(
+            impls.contains(&"S"),
+            "impl S must be named S, not unknown; impls={impls:?}"
+        );
     }
 }

@@ -431,6 +431,14 @@ pub fn qualification_evidence(
     if text.contains(&qual) {
         score += 200;
     }
+    // Rust associated fn: `impl Type { fn leaf }` — the file never writes `Type::leaf`.
+    if text.contains(&format!("impl {parent_name}"))
+        || text.contains(&format!("impl {parent_name}<"))
+        || text.contains(&format!("for {parent_name} {{"))
+        || text.contains(&format!("for {parent_name}<"))
+    {
+        score += 180;
+    }
     // C++ include guards: mozilla_Mutex_h, mozilla_detail_Foo_h
     let guard = format!(
         "{}_{}",

@@ -683,6 +683,34 @@ namespace js {\nclass Mutex { void lock(); };\n}\n"
     }
 
     #[test]
+    fn seed_qualified_rust_impl_type_method() {
+        // Dogfood: C2EligibleLook::from_drawer — file never writes Type::method.
+        let mut method = test_block("crates/rr-observe/src/c2_visibility.rs");
+        method.name = "from_drawer".into();
+        method.kind = "function_item".into();
+        method.source = "\
+impl C2EligibleLook {\n    pub fn from_drawer() {}\n}\n"
+            .into();
+        method.start_line = 32;
+        method.end_line = 80;
+
+        let mut twin = test_block("crates/other/src/lib.rs");
+        twin.name = "from_drawer".into();
+        twin.kind = "function_item".into();
+        twin.source = "fn from_drawer() {}\n".into();
+
+        let scoped = [&method, &twin];
+        let g = code_graph::CodeGraph::new();
+        let best =
+            seed_qualified_symbol(&g, &scoped, "C2EligibleLook::from_drawer").expect("seed");
+        assert!(
+            best.file.to_string_lossy().contains("c2_visibility"),
+            "C2EligibleLook::from_drawer must seed the impl method, got {:?}",
+            best.file
+        );
+    }
+
+    #[test]
     fn seed_qualified_rejects_unrelated_namespace_twin() {
         let mut js = test_block("js/src/threading/Mutex.h");
         js.name = "Mutex".into();
